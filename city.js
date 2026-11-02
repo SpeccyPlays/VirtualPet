@@ -70,15 +70,17 @@ export function createCity({ objects = [] } = {}) {
     group.position.set(x, 0, z);
     city.add(group);
   }
-  function terracedRow(startX, z, count, colors, height = 4.4) {
-    for (let index = 0; index < count; index += 1) building(startX + index * 3.05, z, 2.9, 4.8, height + (index % 2) * 0.35, colors[index % colors.length]);
-  }
-  terracedRow(-24, -11, 8, [0x9b493d, 0xa95443, 0x874237], 4.3);
-  terracedRow(2, -11, 8, [0x9b493d, 0xa95443, 0x874237], 4.5);
-  terracedRow(-24, 11, 8, [0x9b493d, 0xa95443, 0x874237], 4.2);
-  terracedRow(2, 11, 8, [0x9b493d, 0xa95443, 0x874237], 4.4);
-  building(-12, -11, 5.6, 5, 5.4, 0x6c3832);
-  building(14, 11, 5.6, 5, 5.2, 0x6c3832);
+  // Wychmere uses irregular blocks and gaps rather than the previous repeated
+  // terrace rows. The mix leaves sight lines toward the landing site and park.
+  [
+    [-25, -11, 4.4, 4.6, 5.4, 0x6b8790], [-18, -12, 5.2, 4.2, 4.1, 0x9b493d],
+    [-9, -11, 3.8, 5.2, 6.2, 0x7a5969], [0, -12, 6.2, 4.1, 4.6, 0xb27659],
+    [10, -11, 4.8, 5.2, 5.7, 0x58747d], [19, -12, 6.6, 4.2, 4.3, 0x9c6a53],
+    [26, -11, 3.5, 5.2, 6.4, 0x6c3832], [-24, 11, 6.4, 4.5, 4.6, 0x874237],
+    [-14, 12, 4.4, 4.2, 6.1, 0x6f8790], [-5, 11, 6.2, 4.6, 4.4, 0xa95443],
+    [6, 12, 4.3, 5.3, 5.8, 0x7b6571], [15, 11, 6.1, 4.2, 4.7, 0x6c3832],
+    [25, 12, 4.8, 4.8, 5.6, 0x9b493d],
+  ].forEach(([x, z, width, depth, height, color]) => building(x, z, width, depth, height, color));
 
   function tree(x, z, scale = 0.9) {
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * scale, 0.16 * scale, 1.1 * scale, 7), material(0x654d43));
@@ -143,6 +145,22 @@ export function createCity({ objects = [] } = {}) {
   park.rotation.x = -Math.PI / 2;
   park.position.set(-11, 0.07, 5.8);
   city.add(park);
+  // Juniper's landing site: a subtle alien marker now embedded in the UK city.
+  const landingSite = new THREE.Group();
+  const landingPad = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.06, 12), material(0x526d78, 0.65));
+  landingPad.position.y = 0.09;
+  landingSite.add(landingPad);
+  for (const radius of [1.25, 0.72]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.035, 6, 18), material(0x91e7c1, 0.4));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.14;
+    landingSite.add(ring);
+  }
+  const beacon = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), material(0xc4b4ff, 0.35));
+  beacon.position.y = 0.55;
+  landingSite.add(beacon);
+  landingSite.position.set(20, 0, 5.9);
+  city.add(landingSite);
   function lamp(x, z) {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 2.3, 6), material(0x26333b));
     pole.position.set(x, 1.2, z);

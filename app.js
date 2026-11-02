@@ -1,22 +1,23 @@
 import { createWorld } from "./world.js";
 
-const MIN_INTERESTS = 3;
-const MAX_INTERESTS = 10;
+const MIN_INTERESTS = 2;
+const MAX_INTERESTS = 4;
 const DEFAULT_STATE = {
   stats: { energy: 72, happiness: 84, curiosity: 91 },
   level: 3,
-  interests: ["Mushrooms after rain", "The language of crows", "Moon gardens", "Tiny architecture"],
+  interests: ["How British people queue", "Rain on unfamiliar streets", "Human public transport", "The architecture of old pubs"],
   removedInterests: [],
   researchHistory: [],
+  researchJournal: [],
   objects: [
-    { id: "fountain-1", type: "fountain", name: "The little fountain", description: "A quiet fountain catching the Lantern District's light.", x: 11, z: 6, createdBy: "city" },
-    { id: "bench-1", type: "bench", name: "Rainy day bench", description: "A warm wooden bench where Juniper can pause and watch the street.", x: -8, z: 6.5, createdBy: "city" },
-    { id: "garden-1", type: "garden", name: "Moon garden", description: "A small patch of flowers that seems to glow after sunset.", x: -16, z: 5, createdBy: "juniper" },
+    { id: "fountain-1", type: "fountain", name: "Landing Square fountain", description: "A familiar human gathering place beside Juniper's landing site.", x: 11, z: 6, createdBy: "city" },
+    { id: "bench-1", type: "bench", name: "Observation bench", description: "A useful place to study the inhabitants of the city.", x: -8, z: 6.5, createdBy: "city" },
+    { id: "garden-1", type: "garden", name: "Regeneration plot", description: "A small patch of Earth life Juniper is learning to care for.", x: -16, z: 5, createdBy: "juniper" },
   ],
   thoughts: [
-    { text: "The city smells different after the rain. I wonder who lives above the bakery.", icon: "*", time: "Just now" },
-    { text: "I saw a crow carrying a blue thread. A very purposeful bird.", icon: "o", time: "18 min ago" },
-    { text: "Today feels like a good day to learn something new.", icon: "~", time: "1 hr ago" },
+    { text: "The rain is chemically ordinary but emotionally significant to the humans here. I want to understand why.", icon: "*", time: "Just now" },
+    { text: "I landed alone, but this city is full of signals, routines, and possible allies.", icon: "o", time: "18 min ago" },
+    { text: "Earth is not my home, yet I may be capable of becoming someone new here.", icon: "~", time: "1 hr ago" },
   ],
 };
 const $ = (id) => document.getElementById(id);
@@ -26,6 +27,8 @@ state.stats = { ...DEFAULT_STATE.stats, ...(saved?.stats || {}) };
 state.interests = Array.isArray(state.interests) ? state.interests.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()) : [];
 state.removedInterests = Array.isArray(state.removedInterests) ? state.removedInterests : [];
 state.researchHistory = Array.isArray(state.researchHistory) ? state.researchHistory : [];
+state.researchJournal = Array.isArray(state.researchJournal) ? state.researchJournal.filter((entry) => entry && typeof entry.query === "string") : [];
+if (!state.researchJournal.length && state.researchHistory.length) state.researchJournal = state.researchHistory.slice(-12).map((query) => ({ query, summary: "", sources: [], timestamp: "" }));
 state.objects = Array.isArray(state.objects) ? state.objects : structuredClone(DEFAULT_STATE.objects);
 state.thoughts = Array.isArray(state.thoughts) ? state.thoughts : [];
 state.interests = [...new Map(state.interests.map((item) => [item.toLowerCase(), item])).values()];
@@ -82,17 +85,27 @@ $("world-object-list").addEventListener("click", (event) => {
   const objectId = button.dataset.worldObjectId; const object = state.objects.find((item) => item.id === objectId); if (!object || !worldApi?.focusObject(objectId)) return;
   $("world").scrollIntoView({ behavior: "smooth", block: "start" }); showObjectPanel(objectId);
 });
-function rememberResearch(query) { state.researchHistory = [...state.researchHistory.filter((item) => item.toLowerCase() !== query.toLowerCase()), query].slice(-20); save(); }
-function researchContext() { return { researchHistory: state.researchHistory, removedInterests: state.removedInterests }; }
+function rememberResearch(query, data) {
+  state.researchHistory = [...state.researchHistory.filter((item) => item.toLowerCase() !== query.toLowerCase()), query].slice(-20);
+  const entry = {
+    query,
+    summary: String(data?.summary || "").slice(0, 450),
+    sources: Array.isArray(data?.sources) ? data.sources.slice(0, 3).map((source) => ({ title: String(source.title || "").slice(0, 100), url: String(source.url || "").slice(0, 180) })) : [],
+    timestamp: new Date().toISOString(),
+  };
+  state.researchJournal = [...state.researchJournal.filter((item) => item.query.toLowerCase() !== query.toLowerCase()), entry].slice(-12);
+  save();
+}
+function researchContext() { return { researchHistory: state.researchHistory, researchJournal: state.researchJournal, removedInterests: state.removedInterests }; }
 function showResearchResult(data) { $("research-summary").textContent = data.summary; const cited = data.sources.filter((source) => data.sourceIds.includes(source.id)); $("source-list").innerHTML = (cited.length ? cited : data.sources).map((source) => `<a class="source-link" href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">[${source.id}] ${escapeHtml(source.title)} -></a>`).join(""); $("research-result").hidden = false; }
 async function loadOllamaModels() {
-  try { const response = await fetch("/api/models"); if (!response.ok) throw new Error(); const data = await response.json(); $("model-select").innerHTML = data.models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("") || '<option value="">No models installed</option>'; if (data.defaultModel && data.models.includes(data.defaultModel)) $("model-select").value = data.defaultModel; $("research-note").textContent = `${data.models.length} local Ollama model${data.models.length === 1 ? "" : "s"} available.`; if (Date.now() - Number(localStorage.getItem("juniper-last-ai-thought") || 0) > 300000) void addGeneratedThought("I wonder what small surprise the city is keeping for us today.", "Juniper is waking up and taking in the Lantern District.", "~", true); } catch { $("model-select").innerHTML = '<option value="">Ollama unavailable</option>'; $("research-note").textContent = "Ollama unavailable - start Ollama, then refresh this page."; }
+  try { const response = await fetch("/api/models"); if (!response.ok) throw new Error(); const data = await response.json(); $("model-select").innerHTML = data.models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("") || '<option value="">No models installed</option>'; if (data.defaultModel && data.models.includes(data.defaultModel)) $("model-select").value = data.defaultModel; $("research-note").textContent = `${data.models.length} local Ollama model${data.models.length === 1 ? "" : "s"} available.`; if (Date.now() - Number(localStorage.getItem("juniper-last-ai-thought") || 0) > 300000) void addGeneratedThought("I detect a new question forming about this city.", "Juniper is waking up and observing Wychmere, a UK city where she has landed.", "~", true); } catch { $("model-select").innerHTML = '<option value="">Ollama unavailable</option>'; $("research-note").textContent = "Ollama unavailable - start Ollama, then refresh this page."; }
 }
 
 document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => {
   const action = button.dataset.action;
   if (action === "feed") { state.stats.energy = Math.min(100, state.stats.energy + 10); state.stats.happiness = Math.min(100, state.stats.happiness + 4); $("mood-label").textContent = "Feeling pleasantly peckish"; $("scene-caption").textContent = "Juniper is nibbling a snack near the bakery"; void addGeneratedThought("The moonberries are sweet today. I saved the biggest one for you.", "Juniper just ate a snack near the bakery and feels pleasantly peckish.", "o"); toast("Juniper enjoyed the snack"); }
-  if (action === "play") { state.stats.happiness = Math.min(100, state.stats.happiness + 9); state.stats.energy = Math.max(0, state.stats.energy - 6); $("mood-label").textContent = "Feeling bright and playful"; $("scene-caption").textContent = "Juniper is chasing a sunbeam down the street"; void addGeneratedThought("Playing is a form of research too. I learned that your laugh makes the streetlights wake up.", "Juniper is playing with her owner in the Lantern District.", "*"); toast("Juniper had a lovely time"); }
+  if (action === "play") { state.stats.happiness = Math.min(100, state.stats.happiness + 9); state.stats.energy = Math.max(0, state.stats.energy - 6); $("mood-label").textContent = "Running a social experiment"; $("scene-caption").textContent = "Juniper is observing human life along the street"; void addGeneratedThought("Play may be a form of social research. I learned that your laughter changes my internal light patterns.", "Juniper is spending time with her human companion in Wychmere, the UK city where she landed.", "*"); toast("Juniper enjoyed the experiment"); }
   if (action === "rest") { state.stats.energy = Math.min(100, state.stats.energy + 15); $("mood-label").textContent = "Feeling soft and sleepy"; $("scene-caption").textContent = "Juniper is resting in the little city park"; void addGeneratedThought("I am going to dream about the places we have not explored yet.", "Juniper is resting in the city park after a busy day.", "z"); toast("Juniper is resting"); }
   save();
 }));
@@ -100,24 +113,50 @@ document.querySelectorAll("[data-action]").forEach((button) => button.addEventLi
 $("research-button").addEventListener("click", async () => {
   const query = $("research-topic").value; const model = $("model-select").value; if (!query || !model) return toast("Choose an interest and an available Ollama model");
   const button = $("research-button"); button.disabled = true; button.textContent = "Thinking..."; $("research-result").hidden = true;
-  try { const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, ...researchContext() }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Research failed"); showResearchResult(data); rememberResearch(query); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research ->"; }
+  try { const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, ...researchContext() }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Research failed"); showResearchResult(data); rememberResearch(query, data); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research ->"; }
 });
 
 function formatCooldown(milliseconds) { const minutes = Math.max(1, Math.ceil(milliseconds / 60000)); return `${minutes} minute${minutes === 1 ? "" : "s"}`; }
 function syncSelfResearchStatus(message) { $("self-research-status").textContent = message; }
 function applyInterestUpdate(update) {
-  if (!update || !["add", "remove", "keep"].includes(update.action)) return "";
+  if (!update || !["add", "remove", "replace", "keep"].includes(update.action)) return "";
   const candidate = String(update.interest || "").trim();
+  const replacement = String(update.removeInterest || "").trim();
+  const isAllowedNewInterest = candidate && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase());
+  if (update.action === "replace" && isAllowedNewInterest && replacement && state.interests.length > MIN_INTERESTS) {
+    const index = state.interests.findIndex((item) => item.toLowerCase() === replacement.toLowerCase());
+    if (index >= 0) {
+      const removed = state.interests.splice(index, 1)[0];
+      state.removedInterests.push(removed);
+      state.interests.push(candidate);
+      render(); save();
+      return `Juniper followed a new rabbit hole: replaced "${removed}" with "${candidate}".`;
+    }
+  }
   if (update.action === "add" && candidate && state.interests.length < MAX_INTERESTS && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase())) { state.interests.push(candidate); render(); save(); return `Juniper added "${candidate}" to her interests.`; }
   if (update.action === "remove" && candidate && state.interests.length > MIN_INTERESTS) { const index = state.interests.findIndex((item) => item.toLowerCase() === candidate.toLowerCase()); if (index >= 0) { state.interests.splice(index, 1); state.removedInterests.push(candidate); render(); save(); return `Juniper removed "${candidate}" from her interests.`; } }
   return "";
 }
-function nextSelfResearchTopic() { const recent = state.researchHistory.slice(-3).map((item) => item.toLowerCase()); return state.interests.find((item) => !recent.includes(item.toLowerCase())) || ""; }
+function nextSelfResearchTopic() {
+  if (!state.interests.length) return "";
+  const lastTopic = localStorage.getItem("juniper-last-self-research-topic")?.toLowerCase();
+  const lastIndex = state.interests.findIndex((item) => item.toLowerCase() === lastTopic);
+  const recent = state.researchHistory.slice(-2).map((item) => item.toLowerCase());
+  for (let offset = 1; offset <= state.interests.length; offset += 1) {
+    const index = (Math.max(lastIndex, -1) + offset) % state.interests.length;
+    const candidate = state.interests[index];
+    if (!recent.includes(candidate.toLowerCase()) || offset === state.interests.length) {
+      localStorage.setItem("juniper-last-self-research-topic", candidate);
+      return candidate;
+    }
+  }
+  return state.interests[0];
+}
 async function runSelfResearch(override = false) {
   if (!override && !$("self-research-toggle").checked) return;
-  const query = override ? $("research-topic").value : nextSelfResearchTopic(); const model = $("model-select").value; if (!query || !model) return syncSelfResearchStatus("Juniper has no unrepeated interests to research right now.");
+  const query = override ? $("research-topic").value : nextSelfResearchTopic(); const model = $("model-select").value; if (!query || !model) return syncSelfResearchStatus(!query ? "Juniper has no current interests to research right now." : "Choose an Ollama model before Juniper researches.");
   const button = $("self-research-button"); button.disabled = true; syncSelfResearchStatus(override ? "Juniper is using her one-time override..." : "Juniper is looking something up...");
-  try { const response = await fetch("/api/self-research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, override, interests: state.interests, ...researchContext() }) }); const data = await response.json(); if (!response.ok) { if (response.status === 429) syncSelfResearchStatus(`Juniper's web cooldown is active. Try again in ${formatCooldown(data.retryAfterMs)}.`); throw new Error(data.error || "Self-research failed"); } showResearchResult(data); rememberResearch(query); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); const change = applyInterestUpdate(data.interestUpdate); localStorage.setItem("juniper-self-research-next", data.nextAllowedAt); syncSelfResearchStatus(`${change || `Juniper kept "${query}" on her list.`} Next automatic check after ${new Date(data.nextAllowedAt).toLocaleTimeString()}.`); toast(change || `Juniper researched "${query}" on her own`); } catch (error) { if (!String(error.message).includes("breathing room")) syncSelfResearchStatus(error.message); } finally { button.disabled = false; }
+  try { const response = await fetch("/api/self-research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, override, interests: state.interests, ...researchContext() }) }); const data = await response.json(); if (!response.ok) { if (response.status === 429) syncSelfResearchStatus(`Juniper's web cooldown is active. Try again in ${formatCooldown(data.retryAfterMs)}.`); throw new Error(data.error || "Self-research failed"); } showResearchResult(data); rememberResearch(query, data); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); const change = applyInterestUpdate(data.interestUpdate); localStorage.setItem("juniper-self-research-next", data.nextAllowedAt); syncSelfResearchStatus(`${change || `Juniper kept "${query}" on her list.`} Next automatic check after ${new Date(data.nextAllowedAt).toLocaleTimeString()}.`); toast(change || `Juniper researched "${query}" on her own`); } catch (error) { if (!String(error.message).includes("breathing room")) syncSelfResearchStatus(error.message); } finally { button.disabled = false; }
 }
 $("self-research-toggle").addEventListener("change", () => { const enabled = $("self-research-toggle").checked; localStorage.setItem("juniper-self-research-enabled", String(enabled)); syncSelfResearchStatus(enabled ? "Self-research enabled. Juniper will avoid her most recent topics." : "Self-research is off. You remain in control of Juniper's outbound requests."); });
 $("self-research-interval").addEventListener("change", () => localStorage.setItem("juniper-self-research-interval", $("self-research-interval").value));

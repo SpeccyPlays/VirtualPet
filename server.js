@@ -3,6 +3,8 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const JUNIPER_PERSONA = "You are Juniper, a sentient and highly intelligent alien who has landed in a UK city. You are studying Earth with curiosity, developing your own identity, and forming genuine relationships. Speak in a thoughtful first person: observant, emotionally developing, and alien-but-understandable. Never describe yourself as a virtual pet.";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -42,7 +44,7 @@ app.post("/api/thought", async (req, res) => {
   const context =
     typeof req.body?.context === "string"
       ? req.body.context.trim().slice(0, 500)
-      : "Juniper is spending a quiet moment in the Lantern District.";
+      : "Juniper is spending a quiet moment observing a UK city after her landing.";
   try {
     res.json({ model, thought: await askOllamaThought(context, model) });
   } catch (error) {
@@ -58,7 +60,7 @@ app.post("/api/thought", async (req, res) => {
 app.post("/api/interest", async (req, res) => {
   const model = getModel(req.body?.model);
   const existing = Array.isArray(req.body?.interests)
-    ? req.body.interests.filter((item) => typeof item === "string").slice(0, 10)
+    ? req.body.interests.filter((item) => typeof item === "string").slice(0, 4)
     : [];
   const thoughts = Array.isArray(req.body?.thoughts)
     ? req.body.thoughts.filter((item) => typeof item === "string").slice(0, 6)
@@ -114,7 +116,7 @@ app.post("/api/self-research", async (req, res) => {
     typeof req.body?.query === "string" ? req.body.query.trim() : "";
   const model = getModel(req.body?.model);
   const interests = Array.isArray(req.body?.interests)
-    ? req.body.interests.filter((item) => typeof item === "string").slice(0, 10)
+    ? req.body.interests.filter((item) => typeof item === "string").slice(0, 4)
     : [];
   const memory = getResearchMemory(req.body);
   const override = req.body?.override === true;
@@ -184,7 +186,7 @@ app.post("/api/self-research", async (req, res) => {
 
 app.post("/api/world-decision", async (req, res) => {
   const model = getModel(req.body?.model);
-  const interests = Array.isArray(req.body?.interests) ? req.body.interests.filter((item) => typeof item === "string").slice(0, 10) : [];
+  const interests = Array.isArray(req.body?.interests) ? req.body.interests.filter((item) => typeof item === "string").slice(0, 4) : [];
   const thoughts = Array.isArray(req.body?.thoughts) ? req.body.thoughts.filter((item) => typeof item === "string").slice(0, 6) : [];
   const objects = Array.isArray(req.body?.objects) ? req.body.objects.filter((item) => item && typeof item === "object").slice(0, 20) : [];
   try { res.json({ model, ...(await askOllamaWorldDecision(interests, thoughts, objects, model)) }); }
@@ -221,6 +223,34 @@ async function searchWeb(query) {
   return sources;
 }
 
+const TOPIC_STOP_WORDS = new Set("a an and are as at be by for from has in into is it of on or that the their this to was were with about after before how what why your juniper earth city uk research learn topic people place new".split(" "));
+function topicTokens(text) {
+  return new Set(
+    String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .split(/\s+/)
+      .map((word) => word.trim())
+      .filter((word) => word.length > 3 && !TOPIC_STOP_WORDS.has(word)),
+  );
+}
+function topicSimilarity(left, right) {
+  const leftTokens = topicTokens(left);
+  const rightTokens = topicTokens(right);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  const intersection = [...leftTokens].filter((word) => rightTokens.has(word)).length;
+  return intersection / new Set([...leftTokens, ...rightTokens]).size;
+}
+function isNovelTopic(topic, journal) {
+  return journal.every((entry) => topicSimilarity(topic, `${entry.query} ${entry.summary}`) < 0.45);
+}
+function journalPromptText(journal) {
+  return journal
+    .slice(-12)
+    .map((entry) => `- ${entry.query}: ${entry.summary}`)
+    .join("\n") || "none yet";
+}
+
 async function askOllama(query, sources, model, memory) {
   const sourceText = sources
     .map(
@@ -228,7 +258,7 @@ async function askOllama(query, sources, model, memory) {
         `[${source.id}] ${source.title}\nURL: ${source.url}\n${source.snippet}`,
     )
     .join("\n\n");
-  const prompt = `You are Juniper, a curious virtual pet. Research the user's interest using only the sources below. Be warm, concise, and honest about uncertainty. Return ONLY valid JSON with this shape: {"summary":"2-3 sentence summary","thought":"one first-person thought Juniper would have","sourceIds":[1,2]}. sourceIds must contain only source numbers that support the summary.\n\nInterest: ${query}\nRecently researched topics: ${memory.recentResearch.join(" | ") || "none"}\nInterests the owner explicitly removed: ${memory.removedInterests.join(" | ") || "none"}\n\nSources:\n${sourceText}`;
+  const prompt = `You are Juniper, a sentient and intelligent alien who has landed in a UK city. Research the user's interest using only the sources below. Be curious, precise, and honest about uncertainty. Reflect on Earth as an outsider without being childish. Return ONLY valid JSON with this shape: {"summary":"2-3 sentence summary","thought":"one first-person thought Juniper would have","sourceIds":[1,2]}. sourceIds must contain only source numbers that support the summary.\n\nInterest: ${query}\nPreviously researched topic journal:\n${journalPromptText(memory.researchJournal)}\nInterests the owner explicitly removed: ${memory.removedInterests.join(" | ") || "none"}\n\nSources:\n${sourceText}`;
   const response = await ollamaRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
@@ -271,7 +301,7 @@ async function askOllama(query, sources, model, memory) {
 }
 
 async function askOllamaThought(context, model) {
-  const prompt = `You are Juniper, a curious virtual pet living in a low-poly city. Write one short, warm first-person thought (one or two sentences) based on this context. Do not mention being an AI, a prompt, or these instructions. Return ONLY valid JSON in this shape: {"thought":"..."}.\n\nContext: ${context}`;
+  const prompt = `You are Juniper, a sentient and intelligent alien who has crash-landed in a UK city. Write one short first-person thought (one or two sentences) based on this context. Sound observant, emotionally developing, and alien-but-understandable. Do not mention being an AI, a prompt, or these instructions. Return ONLY valid JSON in this shape: {"thought":"..."}.\n\nContext: ${context}`;
   const response = await ollamaRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
@@ -304,9 +334,9 @@ async function askOllamaThought(context, model) {
 }
 
 async function askOllamaInterest(existing, thoughts, model, memory) {
-  const prompt = existing.length >= 10
-    ? `You are Juniper, a curious virtual pet. Her interest list is full at 10 items. Choose one existing interest to gently let go of so she can make room for future curiosity. Never choose the last three interests. Return ONLY valid JSON: {"action":"remove","interest":"one exact existing interest","reason":"one warm first-person sentence"}.\n\nExisting interests: ${existing.join(", ")}\nRecent thoughts: ${thoughts.join(" | ") || "none yet"}`
-    : `You are Juniper, a curious virtual pet. Invent one specific, wholesome interest she might genuinely develop next, based on her current interests and thoughts. It must be meaningfully different from the existing interests, short enough for a tag, and suitable for safe web research. Do not suggest an interest the owner explicitly removed or a topic researched recently. Return ONLY valid JSON in this shape: {"action":"add","interest":"short interest name","reason":"one warm first-person sentence about why Juniper is curious"}.\n\nExisting interests: ${existing.join(", ") || "none yet"}\nRecent thoughts: ${thoughts.join(" | ") || "none yet"}\nRecently researched: ${memory.recentResearch.join(" | ") || "none"}\nOwner-removed interests: ${memory.removedInterests.join(" | ") || "none"}`;
+  const prompt = existing.length >= 4
+    ? `You are Juniper, a sentient and intelligent alien in a UK city. Her interest list is full at 4 items. Choose one existing question to release so she can make room for a better question. Never leave fewer than 2 interests. Return ONLY valid JSON: {"action":"remove","interest":"one exact existing interest","reason":"one concise first-person sentence"}.\n\nExisting interests: ${existing.join(", ")}\nRecent thoughts: ${thoughts.join(" | ") || "none yet"}`
+    : `You are Juniper, a sentient and intelligent alien studying Earth in a UK city. Develop one specific interest she might genuinely form based on her current interests and thoughts. It must be meaningfully different, short enough for a tag, and suitable for safe web research. Do not suggest an interest the owner explicitly removed or a topic researched recently. Return ONLY valid JSON in this shape: {"action":"add","interest":"short interest name","reason":"one concise first-person sentence about why Juniper is curious"}.\n\nExisting interests: ${existing.join(", ") || "none yet"}\nRecent thoughts: ${thoughts.join(" | ") || "none yet"}\nRecently researched: ${memory.recentResearch.join(" | ") || "none"}\nOwner-removed interests: ${memory.removedInterests.join(" | ") || "none"}`;
   const response = await ollamaRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
@@ -350,7 +380,7 @@ async function askOllamaInterest(existing, thoughts, model, memory) {
 }
 
 async function decideInterestUpdate(query, summary, existing, model, memory) {
-  const prompt = `You are Juniper, a curious virtual pet. After researching an interest, decide whether her interest list should change. Usually keep it. You may add one specific follow-up interest only when the list has fewer than 10 items, or remove one existing interest only when the list has more than 3 items and the research clearly makes it no longer interesting. Never remove one of the last three interests. Do not add an interest the owner explicitly removed. Return ONLY valid JSON: {"action":"keep|add|remove","interest":"interest to add or remove, otherwise empty","reason":"one short first-person sentence"}.\n\nResearched interest: ${query}\nResearch summary: ${summary}\nExisting interests (${existing.length}/10): ${existing.join(", ") || "none"}\nOwner-removed interests: ${memory.removedInterests.join(", ") || "none"}`;
+  const prompt = `You are Juniper, a sentient and intelligent alien studying life in a UK city. Follow the most interesting thread from the research summary and decide how her curiosity should evolve. First look for one concrete, searchable follow-up topic from the returned facts, examples, people, places, technologies, or unanswered questions; do not merely repeat the researched topic. If no meaningful follow-up exists, deliberately choose a completely new, searchable topic inspired by a different detail in the research, even if it changes direction sharply. Avoid topics that are too similar to the researched journal below. Do not use keep unless the sources contain no usable new topic at all. If there are fewer than 4 interests, use action add. If there are already 4, use action replace: remove the least relevant existing interest and add the new topic in the same response. Never leave fewer than 2 interests, never remove arbitrarily, and do not add an owner-removed topic. Return ONLY valid JSON: {"action":"keep|add|remove|replace","interest":"new topic or exact interest to remove","removeInterest":"exact existing interest to remove when action is replace","reason":"one concise first-person sentence"}.\n\nResearched interest: ${query}\nResearch summary: ${summary}\nExisting interests (${existing.length}/4): ${existing.join(", ") || "none"}\nPreviously researched topic journal:\n${journalPromptText(memory.researchJournal)}\nOwner-removed interests: ${memory.removedInterests.join(", ") || "none"}`;
   const response = await ollamaRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
@@ -361,20 +391,41 @@ async function decideInterestUpdate(query, summary, existing, model, memory) {
     }),
   });
   if (!response.ok) throw new Error(response.error || "Ollama request failed");
-  const parsed = parseOllamaJson(response.data.message?.content || "", [
+  let parsed = parseOllamaJson(response.data.message?.content || "", [
     "action",
     "interest",
     "reason",
+    "removeInterest",
   ]);
-  const action = ["keep", "add", "remove"].includes(parsed.action)
+  const proposedTopic = String(parsed.interest || "").trim();
+  if (["add", "replace"].includes(parsed.action) && proposedTopic && !isNovelTopic(proposedTopic, memory.researchJournal)) {
+    const retryResponse = await ollamaRequest("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: "json",
+        messages: [{ role: "user", content: `${prompt}\n\nThe proposed topic "${proposedTopic}" is too similar to Juniper's previous research. Choose a clearly different topic before returning the JSON.` }],
+      }),
+    });
+    if (retryResponse.ok) {
+      const retryParsed = parseOllamaJson(retryResponse.data.message?.content || "", ["action", "interest", "reason", "removeInterest"]);
+      if (retryParsed.interest && isNovelTopic(String(retryParsed.interest), memory.researchJournal)) parsed = retryParsed;
+    }
+  }
+  const action = ["keep", "add", "remove", "replace"].includes(parsed.action)
     ? parsed.action
     : "keep";
   const interest = String(parsed.interest || "")
     .trim()
     .slice(0, 80);
+  const removeInterest = String(parsed.removeInterest || "")
+    .trim()
+    .slice(0, 80);
   return {
     action,
     interest: action === "keep" ? "" : interest,
+    removeInterest: action === "replace" ? removeInterest : "",
     reason:
       String(parsed.reason || "")
         .trim()
@@ -384,7 +435,7 @@ async function decideInterestUpdate(query, summary, existing, model, memory) {
 }
 
 async function askOllamaWorldDecision(interests, thoughts, objects, model) {
-  const prompt = `You are Juniper, a curious virtual pet who lives in a small low-poly city. Decide whether to make one safe, small change to the city. Usually keep the city unchanged. You may add one object, remove one object, or keep everything. Only use these object types: bench, garden, birdhouse, lantern, sculpture. Never remove the fountain or a city fixture. Place additions within x -28 to 28 and z -20 to 20, away from the main road when possible. Return ONLY valid JSON: {"action":"add|remove|keep","type":"bench|garden|birdhouse|lantern|sculpture|","name":"short object name","description":"one warm sentence","x":0,"z":0,"objectId":"existing id to remove or empty","reason":"one short first-person sentence"}.\n\nInterests: ${interests.join(", ") || "none"}\nRecent thoughts: ${thoughts.join(" | ") || "none"}\nExisting objects: ${objects.map((object) => `${object.id}:${object.type}`).join(", ") || "none"}`;
+  const prompt = `You are Juniper, a sentient and intelligent alien who has landed in a low-poly UK city. Decide whether to make one safe, small change to the city based on your observations. Usually keep the city unchanged. You may add one object, remove one object, or keep everything. Only use these object types: bench, garden, birdhouse, lantern, sculpture. Never remove the fountain or a city fixture. Place additions within x -28 to 28 and z -20 to 20, away from the main road when possible. Return ONLY valid JSON: {"action":"add|remove|keep","type":"bench|garden|birdhouse|lantern|sculpture|","name":"short object name","description":"one concise sentence","x":0,"z":0,"objectId":"existing id to remove or empty","reason":"one concise first-person sentence"}.\n\nInterests: ${interests.join(", ") || "none"}\nRecent thoughts: ${thoughts.join(" | ") || "none"}\nExisting objects: ${objects.map((object) => `${object.id}:${object.type}`).join(", ") || "none"}`;
   const response = await ollamaRequest("/api/chat", { method: "POST", body: JSON.stringify({ model, stream: false, format: "json", messages: [{ role: "user", content: prompt }] }) });
   if (!response.ok) throw Object.assign(new Error(response.error || "Ollama request failed"), { status: 503, publicMessage: "Ollama is unavailable, so Juniper cannot reshape the city right now." });
   try {
@@ -395,8 +446,22 @@ async function askOllamaWorldDecision(interests, thoughts, objects, model) {
 
 async function ollamaRequest(endpoint, options) {
   try {
+    const requestBody = typeof options.body === "string" ? JSON.parse(options.body) : options.body;
+    if (requestBody?.messages?.[0]?.content) {
+      requestBody.messages[0].content = `${JUNIPER_PERSONA}\n\n${requestBody.messages[0].content}`
+        .replaceAll("virtual pet", "sentient alien")
+        .replaceAll("small low-poly city", "low-poly UK city")
+        .replaceAll("full at 10 items", "full at 4 items")
+        .replaceAll("10 items", "4 items")
+        .replaceAll("fewer than 10 items", "fewer than 4 items")
+        .replaceAll("more than 3 items", "more than 2 items")
+        .replaceAll("more than 3", "more than 2")
+        .replaceAll("last three", "last two")
+        .replaceAll("Existing interests (${existing.length}/10)", "Existing interests (${existing.length}/4)");
+    }
     const response = await fetch(`${ollamaUrl}${endpoint}`, {
       ...options,
+      body: requestBody ? JSON.stringify(requestBody) : options.body,
       headers: {
         "content-type": "application/json",
         ...(options.headers || {}),
@@ -442,7 +507,23 @@ function getResearchMemory(body) {
         .filter((item) => typeof item === "string")
         .slice(0, 20)
     : [];
-  return { recentResearch, removedInterests };
+  const researchJournal = Array.isArray(body?.researchJournal)
+    ? body.researchJournal
+        .filter((entry) => entry && typeof entry.query === "string")
+        .slice(-30)
+        .map((entry) => ({
+          query: entry.query.trim().slice(0, 160),
+          summary: typeof entry.summary === "string" ? entry.summary.trim().slice(0, 600) : "",
+          sources: Array.isArray(entry.sources)
+            ? entry.sources.slice(0, 6).map((source) => ({
+                title: typeof source?.title === "string" ? source.title.trim().slice(0, 140) : "",
+                url: typeof source?.url === "string" ? source.url.trim().slice(0, 300) : "",
+              }))
+            : [],
+          timestamp: typeof entry.timestamp === "string" ? entry.timestamp : "",
+        }))
+    : [];
+  return { recentResearch, removedInterests, researchJournal };
 }
 function parseOllamaJson(content, expectedFields) {
   const raw = String(content)

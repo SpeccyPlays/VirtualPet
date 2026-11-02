@@ -40,10 +40,15 @@ export function createWorld({ onCaption, onObjectClick, onAutonomousObject, obje
   scene.add(sun);
   const { city, ground, objectMeshes, addObject, removeObject, getObjectPosition } = createCity({ objects });
   scene.add(city);
-  const juniper = createPet(0xf0be75, 0xf5cc83, 0xd58b62, new THREE.Vector3(0, 0, 0));
-  const friend = createPet(0x9a9be8, 0xb9b8f3, 0x7778c9, new THREE.Vector3(-1.2, 0, 1.2));
+  const juniper = createPet(0x315f68, 0x91e7c1, 0xc4b4ff, new THREE.Vector3(18, 0, 3), "juniper");
+  const friend = createPet(0x6f5798, 0xd3a8ed, 0xffdfa0, new THREE.Vector3(-16, 0, -3), "friend");
   scene.add(juniper, friend);
-  const targets = [-5.3, 5.3].flatMap((x) => [-5.3, 5.3].map((z) => new THREE.Vector3(x, 0, z))).concat([new THREE.Vector3(0, 0, -5.3), new THREE.Vector3(0, 0, 5.3), new THREE.Vector3(-5.3, 0, 0), new THREE.Vector3(5.3, 0, 0)], objects.map((object) => new THREE.Vector3(object.x, 0, object.z)));
+  const targets = [
+    new THREE.Vector3(-24, 0, -3), new THREE.Vector3(-14, 0, 4), new THREE.Vector3(-4, 0, -3),
+    new THREE.Vector3(7, 0, 4), new THREE.Vector3(17, 0, -3), new THREE.Vector3(25, 0, 4),
+    new THREE.Vector3(-20, 0, 7), new THREE.Vector3(3, 0, 7), new THREE.Vector3(22, 0, 7),
+    ...objects.map((object) => new THREE.Vector3(object.x, 0, object.z)),
+  ];
   let destination = targets[0].clone();
   let friendDestination = targets[2].clone();
   let manuallyDirected = false;

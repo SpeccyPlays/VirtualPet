@@ -1,27 +1,43 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
 
-export function createPet(bodyColor, headColor, earColor, start) {
-  const material = (color, roughness = 1) => new THREE.MeshStandardMaterial({ color, roughness });
+// Juniper is deliberately not a pet-shaped character: her silhouette is an
+// angular visitor with a sensor crown, three eyes, and four light-footed limbs.
+export function createPet(bodyColor, headColor, accentColor, start, variant = "juniper") {
+  const material = (color, roughness = 1, emissive = 0) => new THREE.MeshStandardMaterial({ color, roughness, emissive, emissiveIntensity: emissive ? 0.45 : 0 });
   const character = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 8), material(bodyColor, 0.7));
-  body.scale.set(1, 1.15, 0.86);
-  body.position.y = 0.39;
+  const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.38, 1), material(bodyColor, 0.62));
+  body.scale.set(0.86, 1.35, 0.7);
+  body.position.y = 0.62;
   body.castShadow = true;
   character.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 8), material(headColor, 0.7));
-  head.position.set(0, 0.82, 0);
+  const head = new THREE.Mesh(new THREE.OctahedronGeometry(0.38, 1), material(headColor, 0.55));
+  head.scale.set(0.92, 0.82, 0.86);
+  head.position.set(0, 1.25, 0);
   head.castShadow = true;
   character.add(head);
-  [-0.15, 0.15].forEach((x) => {
-    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 4), material(earColor));
-    ear.position.set(x, 1.06, 0);
-    ear.rotation.z = x > 0 ? -0.32 : 0.32;
-    character.add(ear);
-  });
-  [-0.09, 0.09].forEach((x) => {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), material(0x203d3b));
-    eye.position.set(x, 0.84, 0.25);
+  const eyeMaterial = material(accentColor, 0.3, accentColor);
+  [-0.15, 0, 0.15].forEach((x, index) => {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(index === 1 ? 0.052 : 0.038, 8, 6), eyeMaterial);
+    eye.position.set(x, 1.3 + (index === 1 ? 0.03 : 0), 0.32);
     character.add(eye);
+  });
+  const crown = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.38, 5), material(accentColor, 0.4, accentColor));
+  crown.position.y = 1.75;
+  crown.rotation.z = variant === "friend" ? -0.35 : 0.2;
+  character.add(crown);
+  [-0.22, 0.22].forEach((x) => {
+    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.38, 4, 6), material(bodyColor, 0.75));
+    arm.position.set(x, 0.62, 0);
+    arm.rotation.z = x > 0 ? -0.35 : 0.35;
+    arm.castShadow = true;
+    character.add(arm);
+  });
+  [-0.19, 0.19].forEach((x) => {
+    const limb = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.32, 4, 6), material(accentColor, 0.7));
+    limb.position.set(x, 0.2, 0);
+    limb.rotation.z = x > 0 ? -0.12 : 0.12;
+    limb.castShadow = true;
+    character.add(limb);
   });
   character.position.copy(start);
   return character;
