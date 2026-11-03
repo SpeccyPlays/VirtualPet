@@ -3,6 +3,7 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.m
 // Juniper is deliberately not a pet-shaped character: her silhouette is an
 // angular visitor with a sensor crown, three eyes, and four light-footed limbs.
 export function createPet(bodyColor, headColor, accentColor, start, variant = "juniper") {
+  // Build one reusable alien body; colours and crown angle distinguish characters.
   const material = (color, roughness = 1, emissive = 0) => new THREE.MeshStandardMaterial({ color, roughness, emissive, emissiveIntensity: emissive ? 0.45 : 0 });
   const character = new THREE.Group();
   const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.38, 1), material(bodyColor, 0.62));

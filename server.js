@@ -19,9 +19,11 @@ const selfResearchIntervalMs = Number(
 );
 const selfResearchRequests = new Map();
 
+// Static hosting and small JSON request bodies for the local-only backend.
 app.use(express.json({ limit: "32kb" }));
 app.use(express.static(__dirname));
 
+// Health, model discovery, thoughts, interests, research, and world decisions.
 app.get("/api/health", async (_req, res) => {
   const ollama = await ollamaRequest("/api/tags", { method: "GET" });
   res.json({ ok: true, ollama: ollama.ok, defaultModel });
@@ -193,6 +195,7 @@ app.post("/api/world-decision", async (req, res) => {
   catch (error) { res.status(error.status || 503).json({ error: error.publicMessage || "Juniper could not decide what to do with the city.", detail: error.message }); }
 });
 
+// Search provider adapter: keep outbound web access server-side.
 async function searchWeb(query) {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const response = await fetch(url, {
@@ -223,6 +226,7 @@ async function searchWeb(query) {
   return sources;
 }
 
+// Lightweight novelty scoring avoids adding a second embedding dependency.
 const TOPIC_STOP_WORDS = new Set("a an and are as at be by for from has in into is it of on or that the their this to was were with about after before how what why your juniper earth city uk research learn topic people place new".split(" "));
 function topicTokens(text) {
   return new Set(
@@ -435,7 +439,7 @@ async function decideInterestUpdate(query, summary, existing, model, memory) {
 }
 
 async function askOllamaWorldDecision(interests, thoughts, objects, model) {
-  const prompt = `You are Juniper, a sentient and intelligent alien who has landed in a low-poly UK city. Decide whether to make one safe, small change to the city based on your observations. Usually keep the city unchanged. You may add one object, remove one object, or keep everything. Only use these object types: bench, garden, birdhouse, lantern, sculpture. Never remove the fountain or a city fixture. Place additions within x -28 to 28 and z -20 to 20, away from the main road when possible. Return ONLY valid JSON: {"action":"add|remove|keep","type":"bench|garden|birdhouse|lantern|sculpture|","name":"short object name","description":"one concise sentence","x":0,"z":0,"objectId":"existing id to remove or empty","reason":"one concise first-person sentence"}.\n\nInterests: ${interests.join(", ") || "none"}\nRecent thoughts: ${thoughts.join(" | ") || "none"}\nExisting objects: ${objects.map((object) => `${object.id}:${object.type}`).join(", ") || "none"}`;
+  const prompt = `You are Juniper, a sentient and intelligent alien who has landed in a UK high street. Decide whether to make one safe, small change to the street based on your observations. Usually keep the street unchanged. You may add one object, remove one object, or keep everything. Only use these UK street object types: bench, phonebox, litterbin, tree, bush. Never invent alien, garden, fountain, lantern, sculpture, or non-UK objects. Place additions on pavements within x -30 to 30 and z -8 to 8, away from the road when possible. Return ONLY valid JSON: {"action":"add|remove|keep","type":"bench|phonebox|litterbin|tree|bush|","name":"short object name","description":"one concise sentence","x":0,"z":0,"objectId":"existing id to remove or empty","reason":"one concise first-person sentence"}.\n\nInterests: ${interests.join(", ") || "none"}\nRecent thoughts: ${thoughts.join(" | ") || "none"}\nExisting objects: ${objects.map((object) => `${object.id}:${object.type}`).join(", ") || "none"}`;
   const response = await ollamaRequest("/api/chat", { method: "POST", body: JSON.stringify({ model, stream: false, format: "json", messages: [{ role: "user", content: prompt }] }) });
   if (!response.ok) throw Object.assign(new Error(response.error || "Ollama request failed"), { status: 503, publicMessage: "Ollama is unavailable, so Juniper cannot reshape the city right now." });
   try {
@@ -444,6 +448,7 @@ async function askOllamaWorldDecision(interests, thoughts, objects, model) {
   } catch { throw Object.assign(new Error("Ollama returned invalid JSON"), { status: 502, publicMessage: "Ollama returned an unreadable city idea." }); }
 }
 
+// Shared Ollama transport with persona context and timeout handling.
 async function ollamaRequest(endpoint, options) {
   try {
     const requestBody = typeof options.body === "string" ? JSON.parse(options.body) : options.body;
@@ -498,6 +503,7 @@ function getModel(value) {
     ? value.trim()
     : defaultModel;
 }
+// Validate and compact client-provided memory before including it in prompts.
 function getResearchMemory(body) {
   const recentResearch = Array.isArray(body?.researchHistory)
     ? body.researchHistory.filter((item) => typeof item === "string").slice(-12)

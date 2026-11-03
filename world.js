@@ -4,6 +4,7 @@ import { createCity } from "./city.js";
 import { createPet } from "./pet.js";
 
 export function createWorld({ onCaption, onObjectClick, onAutonomousObject, objects = [] }) {
+  // Scene, camera, and renderer setup for the explorable high street.
   const host = document.getElementById("scene");
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xa9c6c6);
@@ -38,11 +39,13 @@ export function createWorld({ onCaption, onObjectClick, onAutonomousObject, obje
   sun.position.set(-8, 14, 7);
   sun.castShadow = true;
   scene.add(sun);
+  // Add fixed city geometry and the persisted interactive objects.
   const { city, ground, objectMeshes, addObject, removeObject, getObjectPosition } = createCity({ objects });
   scene.add(city);
   const juniper = createPet(0x315f68, 0x91e7c1, 0xc4b4ff, new THREE.Vector3(18, 0, 3), "juniper");
   const friend = createPet(0x6f5798, 0xd3a8ed, 0xffdfa0, new THREE.Vector3(-16, 0, -3), "friend");
   scene.add(juniper, friend);
+  // Walking destinations stay on pavements and the road edge rather than inside shops.
   const targets = [
     new THREE.Vector3(-24, 0, -3), new THREE.Vector3(-14, 0, 4), new THREE.Vector3(-4, 0, -3),
     new THREE.Vector3(7, 0, 4), new THREE.Vector3(17, 0, -3), new THREE.Vector3(25, 0, 4),
@@ -59,6 +62,7 @@ export function createWorld({ onCaption, onObjectClick, onAutonomousObject, obje
   };
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
+  // Clicks either select an object or send Juniper to a safe ground position.
   host.addEventListener("click", (event) => {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
@@ -84,6 +88,7 @@ export function createWorld({ onCaption, onObjectClick, onAutonomousObject, obje
     onCaption(enabled ? "Third-person view is following Juniper" : "Juniper is exploring the city");
   }
   trackButton.addEventListener("click", () => setTracking(!trackingJuniper));
+  // Animation loop handles walking, friend movement, tracking, and interactions.
   const animate = () => {
     requestAnimationFrame(animate);
     const delta = Math.min(clock.getDelta(), 0.05);

@@ -27,8 +27,8 @@ The default configuration uses `phi4:latest` when that model is available. You c
 
 - Animated 3D UK city, angular alien character with sensor crown and three eyes, buildings, trees, lighting, fog, and responsive layout.
 - Fresh Wychmere landing-district layout with irregular mixed building blocks, an alien landing site, and open sight lines through the city.
-- Low-poly city with roads, sidewalks, buildings, windows, lamps, park, fountain, and trees.
-- More urban low-poly details including an English main street, lane markings, double yellow lines, a zebra crossing, parked cars, hedges, and a bus stop.
+- Low-poly UK high street with a straight two-lane road, continuous pavements, apartments above shops, and readable shop signs.
+- High-street details including supermarkets, betting shops, pizza and kebab shops, lane markings, double yellow lines, a zebra crossing, parked cars, evenly spaced street lights, and a bus stop.
 - Larger explorable district with mouse-wheel and on-screen zoom controls.
 - Autonomous walking between city destinations; click a street or plaza to guide Juniper.
 - Optional third-person tracking camera that follows Juniper as she walks through the district.
@@ -46,7 +46,7 @@ The default configuration uses `phi4:latest` when that model is available. You c
 - A compact structured research journal stores recent summaries and sources locally. The backend uses it for topic-diversity checks and asks Ollama for a second, more original topic when a proposed rabbit hole is too similar.
 - Research history and explicitly removed interests are saved locally and included in future Ollama prompts, helping Juniper avoid immediately repeating herself.
 - The Three.js frontend is split into `world.js` for scene interaction, `city.js` for city geometry, and `pet.js` for character geometry.
-- Persistent interactive world objects such as benches, gardens, fountains, birdhouses, lanterns, and sculptures.
+- Persistent UK street objects including benches, a red telephone box, council litter bins, street trees, and bushes.
 - Clicking a world object opens actions that affect Juniper's energy, happiness, curiosity, and thoughts.
 - Juniper can ask Ollama to add, remove, or leave a safe world object unchanged; the application validates every proposed change before applying it.
 - The world-object list is clickable: selecting an object focuses the camera on its saved coordinates and opens its interaction panel.

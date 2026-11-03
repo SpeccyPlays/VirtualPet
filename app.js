@@ -1,18 +1,22 @@
 import { createWorld } from "./world.js";
 
+// Interest limits and the clean starting state for a newly arrived alien.
 const MIN_INTERESTS = 2;
 const MAX_INTERESTS = 4;
 const DEFAULT_STATE = {
+  worldVersion: 2,
   stats: { energy: 72, happiness: 84, curiosity: 91 },
   level: 3,
-  interests: ["How British people queue", "Rain on unfamiliar streets", "Human public transport", "The architecture of old pubs"],
+  interests: ["What is Earth?", "How humans communicate", "Why humans build cities", "Earth's living ecosystems"],
   removedInterests: [],
   researchHistory: [],
   researchJournal: [],
   objects: [
-    { id: "fountain-1", type: "fountain", name: "Landing Square fountain", description: "A familiar human gathering place beside Juniper's landing site.", x: 11, z: 6, createdBy: "city" },
-    { id: "bench-1", type: "bench", name: "Observation bench", description: "A useful place to study the inhabitants of the city.", x: -8, z: 6.5, createdBy: "city" },
-    { id: "garden-1", type: "garden", name: "Regeneration plot", description: "A small patch of Earth life Juniper is learning to care for.", x: -16, z: 5, createdBy: "juniper" },
+    { id: "bench-1", type: "bench", name: "High-street bench", description: "A practical place to observe human life and passing traffic.", x: -13, z: 6.4, createdBy: "city" },
+    { id: "phonebox-1", type: "phonebox", name: "Red telephone box", description: "A bright red British street landmark Juniper cannot yet explain.", x: 8, z: -6.4, createdBy: "city" },
+    { id: "litterbin-1", type: "litterbin", name: "Council litter bin", description: "A small piece of municipal infrastructure with a surprisingly important role.", x: 22, z: 6.4, createdBy: "city" },
+    { id: "tree-1", type: "tree", name: "Street tree", description: "A living organism sharing the pavement with human commerce.", x: -25, z: 6.5, createdBy: "city" },
+    { id: "bush-1", type: "bush", name: "Pavement bush", description: "A carefully contained patch of greenery beside the shops.", x: 28, z: -6.4, createdBy: "city" },
   ],
   thoughts: [
     { text: "The rain is chemically ordinary but emotionally significant to the humans here. I want to understand why.", icon: "*", time: "Just now" },
@@ -20,6 +24,7 @@ const DEFAULT_STATE = {
     { text: "Earth is not my home, yet I may be capable of becoming someone new here.", icon: "~", time: "1 hr ago" },
   ],
 };
+// DOM access and local state restoration.
 const $ = (id) => document.getElementById(id);
 const saved = JSON.parse(localStorage.getItem("juniper-state") || "null");
 const state = { ...structuredClone(DEFAULT_STATE), ...(saved || {}) };
@@ -30,11 +35,13 @@ state.researchHistory = Array.isArray(state.researchHistory) ? state.researchHis
 state.researchJournal = Array.isArray(state.researchJournal) ? state.researchJournal.filter((entry) => entry && typeof entry.query === "string") : [];
 if (!state.researchJournal.length && state.researchHistory.length) state.researchJournal = state.researchHistory.slice(-12).map((query) => ({ query, summary: "", sources: [], timestamp: "" }));
 state.objects = Array.isArray(state.objects) ? state.objects : structuredClone(DEFAULT_STATE.objects);
+if (state.worldVersion !== DEFAULT_STATE.worldVersion) { state.worldVersion = DEFAULT_STATE.worldVersion; state.objects = structuredClone(DEFAULT_STATE.objects); }
 state.thoughts = Array.isArray(state.thoughts) ? state.thoughts : [];
 state.interests = [...new Map(state.interests.map((item) => [item.toLowerCase(), item])).values()];
 if (state.interests.length > MAX_INTERESTS) { state.removedInterests.push(...state.interests.slice(MAX_INTERESTS)); state.interests = state.interests.slice(0, MAX_INTERESTS); }
 for (const fallback of DEFAULT_STATE.interests) { if (state.interests.length >= MIN_INTERESTS) break; if (!state.interests.some((item) => item.toLowerCase() === fallback.toLowerCase())) state.interests.push(fallback); }
 
+// Normalize saved data so older versions cannot reintroduce unsupported state.
 function save() { localStorage.setItem("juniper-state", JSON.stringify(state)); $("save-status").textContent = "Saved just now"; setTimeout(() => ($("save-status").textContent = "Saved locally"), 1800); }
 function escapeHtml(value) { const div = document.createElement("div"); div.textContent = value; return div.innerHTML; }
 function render() {
@@ -52,26 +59,30 @@ async function addGeneratedThought(fallback, context, icon = "*", markWake = fal
   addThought(thought, icon); if (markWake) localStorage.setItem("juniper-last-ai-thought", String(Date.now()));
 }
 function toast(message) { $("toast").textContent = message; $("toast").classList.add("visible"); setTimeout(() => $("toast").classList.remove("visible"), 2600); }
+// UK high-street objects share their interaction rules with the 3D city.
+// UK street objects and their effects on Juniper's internal state.
 const OBJECT_TYPES = {
-  fountain: { actions: [{ label: "Watch the water", effect: { happiness: 3, curiosity: 2 }, thought: "The fountain is making tiny rainbows. I could watch it forever." }, { label: "Play nearby", effect: { happiness: 5, energy: -2 }, thought: "The fountain splashed my paws. The whole city feels playful now." }] },
-  bench: { actions: [{ label: "Rest here", effect: { happiness: 2, energy: 8 }, thought: "A quiet bench is a good place to let my thoughts settle." }, { label: "Inspect it", effect: { curiosity: 3 }, thought: "Someone built this bench for people who need a small pause." }] },
-  garden: { actions: [{ label: "Smell the flowers", effect: { happiness: 4 }, thought: "The flowers smell like a secret the moon has been keeping." }, { label: "Tend the garden", effect: { curiosity: 2, energy: -1 }, thought: "A little water and patience can make a place feel alive." }] },
-  birdhouse: { actions: [{ label: "Listen for birds", effect: { curiosity: 4 }, thought: "I heard a flutter inside the birdhouse. Someone may be moving in." }, { label: "Watch quietly", effect: { happiness: 2 }, thought: "The best way to meet a bird is to wait and let it choose the moment." }] },
-  lantern: { actions: [{ label: "Light it", effect: { happiness: 2 }, thought: "The lantern makes this corner feel like a tiny room under the stars." }, { label: "Study the design", effect: { curiosity: 2 }, thought: "Even a small lantern can change the shape of a whole street." }] },
-  sculpture: { actions: [{ label: "Admire it", effect: { curiosity: 4 }, thought: "Someone turned a strange idea into something we can walk around." }] },
+  bench: { actions: [{ label: "Sit and observe", effect: { happiness: 2, energy: 8 }, thought: "A bench is an excellent human invention for watching the street." }, { label: "Inspect it", effect: { curiosity: 3 }, thought: "This bench is public, yet no one seems to own it. Fascinating." }] },
+  phonebox: { actions: [{ label: "Study the box", effect: { curiosity: 4 }, thought: "Humans built a room for communication and then mostly stopped using it." }, { label: "Look inside", effect: { happiness: 2, energy: -1 }, thought: "The red box contains layers of human history, stickers, and unanswered questions." }] },
+  litterbin: { actions: [{ label: "Inspect the label", effect: { curiosity: 3 }, thought: "Humans created a system for deciding where unwanted matter belongs." }, { label: "Keep the pavement tidy", effect: { happiness: 3, energy: -1 }, thought: "Small acts of maintenance may be one of the hidden systems holding cities together." }] },
+  tree: { actions: [{ label: "Study the leaves", effect: { curiosity: 4 }, thought: "This organism is quietly converting sunlight into a presence on the pavement." }, { label: "Rest in its shade", effect: { happiness: 4, energy: 3 }, thought: "The tree changes the street without asking anyone for permission." }] },
+  bush: { actions: [{ label: "Examine the greenery", effect: { curiosity: 3 }, thought: "Humans place living things beside concrete and call the arrangement decoration." }, { label: "Check for life", effect: { happiness: 3 }, thought: "There are smaller lives here that the humans walk past every day." }] },
 };
+const SUPPORTED_OBJECT_TYPES = new Set(Object.keys(OBJECT_TYPES));
+state.objects = state.objects.filter((object) => object && SUPPORTED_OBJECT_TYPES.has(object.type));
+if (!state.objects.length) state.objects = structuredClone(DEFAULT_STATE.objects);
 let worldApi;
 function renderWorldObjects() { $("world-object-list").innerHTML = state.objects.map((object) => `<button class="world-object-tag" data-world-object-id="${escapeHtml(object.id)}" title="Show ${escapeHtml(object.name)} in the city"><span>${escapeHtml(object.name)}</span><small>${escapeHtml(object.type)} · ${object.x}, ${object.z}</small></button>`).join(""); }
 function closeObjectPanel() { $("object-panel").hidden = true; }
 function autonomouslyInteract(objectId) {
   const object = state.objects.find((item) => item.id === objectId); if (!object) return;
-  const definition = OBJECT_TYPES[object.type] || OBJECT_TYPES.sculpture; const action = definition.actions[Math.floor(Math.random() * definition.actions.length)];
+  const definition = OBJECT_TYPES[object.type] || OBJECT_TYPES.bench; const action = definition.actions[Math.floor(Math.random() * definition.actions.length)];
   Object.entries(action.effect).forEach(([key, amount]) => { state.stats[key] = Math.max(0, Math.min(100, state.stats[key] + amount)); });
   addThought(action.thought, "*"); $("scene-caption").textContent = `Juniper is ${action.label.toLowerCase()} at ${object.name}`; toast(`Juniper ${action.label.toLowerCase()}`);
 }
 function showObjectPanel(objectId) {
   const object = state.objects.find((item) => item.id === objectId); if (!object) return;
-  const definition = OBJECT_TYPES[object.type] || OBJECT_TYPES.sculpture;
+  const definition = OBJECT_TYPES[object.type] || OBJECT_TYPES.bench;
   $("object-name").textContent = object.name; $("object-description").textContent = object.description; $("object-actions").innerHTML = definition.actions.map((action, index) => `<button data-object-action="${index}">${escapeHtml(action.label)}</button>`).join("") + `<button data-object-action="remove">Pack away</button>`; $("object-panel").hidden = false;
   $("object-actions").onclick = (event) => {
     const button = event.target.closest("[data-object-action]"); if (!button) return;
@@ -85,6 +96,7 @@ $("world-object-list").addEventListener("click", (event) => {
   const objectId = button.dataset.worldObjectId; const object = state.objects.find((item) => item.id === objectId); if (!object || !worldApi?.focusObject(objectId)) return;
   $("world").scrollIntoView({ behavior: "smooth", block: "start" }); showObjectPanel(objectId);
 });
+// Research journal persistence and rendering of Ollama results.
 function rememberResearch(query, data) {
   state.researchHistory = [...state.researchHistory.filter((item) => item.toLowerCase() !== query.toLowerCase()), query].slice(-20);
   const entry = {
@@ -116,6 +128,7 @@ $("research-button").addEventListener("click", async () => {
   try { const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, ...researchContext() }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Research failed"); showResearchResult(data); rememberResearch(query, data); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research ->"; }
 });
 
+// Autonomous research scheduling and interest evolution.
 function formatCooldown(milliseconds) { const minutes = Math.max(1, Math.ceil(milliseconds / 60000)); return `${minutes} minute${minutes === 1 ? "" : "s"}`; }
 function syncSelfResearchStatus(message) { $("self-research-status").textContent = message; }
 function applyInterestUpdate(update) {
@@ -164,9 +177,11 @@ $("self-research-button").addEventListener("click", () => runSelfResearch(false)
 $("self-research-override").addEventListener("click", () => { if (window.confirm("Allow Juniper to make one web request now, even if her cooldown has not finished?")) void runSelfResearch(true); });
 function setupSelfResearch() { $("self-research-toggle").checked = localStorage.getItem("juniper-self-research-enabled") === "true"; const savedInterval = localStorage.getItem("juniper-self-research-interval"); if (savedInterval) $("self-research-interval").value = savedInterval; syncSelfResearchStatus($("self-research-toggle").checked ? "Self-research enabled. Juniper will avoid her most recent topics." : "Self-research is off. You remain in control of Juniper's outbound requests."); setInterval(() => { if (!$("self-research-toggle").checked) return; const nextAllowed = Date.parse(localStorage.getItem("juniper-self-research-next") || ""); const interval = Number($("self-research-interval").value); if (!nextAllowed || Date.now() >= nextAllowed + Math.max(0, interval - 60000)) void runSelfResearch(false); }, 30000); }
 
+// Manual interest management and Ollama-assisted interest changes.
 $("add-interest").addEventListener("click", () => { const interest = window.prompt("What should Juniper be curious about?")?.trim(); if (!interest) return; state.interests.push(interest); state.removedInterests = state.removedInterests.filter((item) => item.toLowerCase() !== interest.toLowerCase()); render(); save(); void addGeneratedThought(`A new question arrived: "${interest}". I cannot wait to follow it.`, `Juniper has just discovered a new interest called "${interest}".`, "*"); toast("A new interest joined the city"); });
 $("develop-interest").addEventListener("click", async () => { const model = $("model-select").value; if (!model) return toast("Choose an available Ollama model first"); const button = $("develop-interest"); button.disabled = true; button.textContent = "Thinking..."; try { const response = await fetch("/api/interest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), researchHistory: state.researchHistory, removedInterests: state.removedInterests }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Juniper could not develop an interest"); if (state.interests.some((item) => item.toLowerCase() === data.interest.toLowerCase()) || state.removedInterests.some((item) => item.toLowerCase() === data.interest.toLowerCase())) throw new Error("Juniper suggested a repeated or removed interest - try again"); state.interests.push(data.interest); render(); save(); addThought(data.reason, "*"); toast(`Juniper is now curious about ${data.interest}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Juniper chooses"; } });
 
+// Ollama-controlled street object creation and removal.
 $("world-decision-button").addEventListener("click", async () => {
   const model = $("model-select").value; if (!model) return toast("Choose an available Ollama model first");
   const button = $("world-decision-button"); button.disabled = true; button.textContent = "Thinking..."; $("world-decision-status").textContent = "Juniper is imagining a small change...";
@@ -174,7 +189,7 @@ $("world-decision-button").addEventListener("click", async () => {
     const response = await fetch("/api/world-decision", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), objects: state.objects }) });
     const decision = await response.json(); if (!response.ok) throw new Error(decision.error || "Juniper could not decide");
     const allowedTypes = new Set(Object.keys(OBJECT_TYPES));
-    if (decision.action === "add" && allowedTypes.has(decision.type) && decision.name && Number.isFinite(decision.x) && Number.isFinite(decision.z) && Math.abs(decision.x) <= 28 && Math.abs(decision.z) <= 20 && state.objects.length < 20) {
+    if (decision.action === "add" && allowedTypes.has(decision.type) && decision.name && Number.isFinite(decision.x) && Number.isFinite(decision.z) && Math.abs(decision.x) <= 30 && Math.abs(decision.z) <= 8 && state.objects.length < 20) {
       const object = { id: `juniper-${Date.now()}`, type: decision.type, name: decision.name, description: decision.description || "A new little part of Juniper's city.", x: decision.x, z: decision.z, createdBy: "juniper" };
       state.objects.push(object); worldApi.addObject(object); renderWorldObjects(); save(); $("world-decision-status").textContent = decision.reason; toast(`Juniper added ${object.name}`);
     } else if (decision.action === "remove") {
@@ -192,6 +207,7 @@ async function askJuniperToMakeRoom() {
   try { const response = await fetch("/api/interest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), researchHistory: state.researchHistory, removedInterests: state.removedInterests }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Juniper could not choose an interest to release"); const index = state.interests.findIndex((item) => item.toLowerCase() === String(data.interest || "").toLowerCase()); if (data.action !== "remove" || index < 0 || index >= state.interests.length - MIN_INTERESTS) throw new Error("Juniper could not find a suitable interest to release"); const removed = state.interests.splice(index, 1)[0]; state.removedInterests.push(removed); render(); save(); addThought(data.reason || `I am making room by saying goodbye to ${removed} for now.`, "*"); toast(`Juniper let go of "${removed}" to make room`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Juniper chooses"; }
 }
 $("develop-interest").addEventListener("click", (event) => { if (state.interests.length >= MAX_INTERESTS) { event.stopImmediatePropagation(); void askJuniperToMakeRoom(); } }, true);
+// Final page setup: render saved state and start the Three.js world.
 $("reset-button").addEventListener("click", () => { if (window.confirm("Reset Juniper's local world and memories?")) { localStorage.removeItem("juniper-state"); location.reload(); } });
 
 save();
