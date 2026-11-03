@@ -100,7 +100,7 @@ app.post("/api/research", async (req, res) => {
     if (!sources.length)
       return res
         .status(404)
-        .json({ error: "No web sources were found for that interest." });
+        .json({ error: `No web sources were found for the interest "${query}".` });
     const answer = await askOllama(query, sources, model, memory);
     res.json({ query, model, ...answer, sources });
   } catch (error) {
@@ -146,7 +146,7 @@ app.post("/api/self-research", async (req, res) => {
       return res
         .status(404)
         .json({
-          error: "Juniper could not find web sources for that interest.",
+          error: `Juniper could not find web sources for the interest "${query}".`,
         });
     const answer = await askOllama(query, sources, model, memory);
     let interestUpdate = {
@@ -454,15 +454,7 @@ async function ollamaRequest(endpoint, options) {
     const requestBody = typeof options.body === "string" ? JSON.parse(options.body) : options.body;
     if (requestBody?.messages?.[0]?.content) {
       requestBody.messages[0].content = `${JUNIPER_PERSONA}\n\n${requestBody.messages[0].content}`
-        .replaceAll("virtual pet", "sentient alien")
-        .replaceAll("small low-poly city", "low-poly UK city")
-        .replaceAll("full at 10 items", "full at 4 items")
-        .replaceAll("10 items", "4 items")
-        .replaceAll("fewer than 10 items", "fewer than 4 items")
-        .replaceAll("more than 3 items", "more than 2 items")
-        .replaceAll("more than 3", "more than 2")
-        .replaceAll("last three", "last two")
-        .replaceAll("Existing interests (${existing.length}/10)", "Existing interests (${existing.length}/4)");
+        .replaceAll("virtual pet", "sentient alien");
     }
     const response = await fetch(`${ollamaUrl}${endpoint}`, {
       ...options,

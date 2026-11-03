@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#101927" />
-    <title>Juniper — An alien mind in a UK city</title>
+    <title>Juniper - An alien mind in a UK city</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -16,50 +16,32 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <a class="brand" href="#world" aria-label="Juniper home"><span class="brand-mark">✦</span><span>Juniper</span></a>
+        <a class="brand" href="#world" aria-label="Juniper home"><span class="brand-mark">*</span><span>Juniper</span></a>
         <div class="status-pill"><span class="status-dot"></span><span id="clock-status">Juniper is observing Earth</span></div>
-        <button class="icon-button" id="reset-button" title="Reset Juniper's saved world">↺</button>
+        <button class="icon-button" id="reset-button" title="Reset Juniper's saved world">Reset</button>
       </header>
 
       <section class="hero-grid">
-        <div class="world-panel card" id="world">
-          <div class="panel-heading world-heading">
-            <div><p class="eyebrow">Juniper's landing site</p><h1>Wychmere, United Kingdom</h1></div>
-            <span class="weather-chip" id="weather-chip">☀ Clear, 18°C</span>
-          </div>
-          <div class="scene-wrap"><div id="scene" aria-label="A low-poly city where Juniper lives"></div><div class="scene-zoom" aria-label="City zoom controls"><button id="zoom-in" title="Zoom in">+</button><button id="zoom-out" title="Zoom out">-</button></div><div class="object-panel" id="object-panel" hidden><div class="object-panel-heading"><div><p class="eyebrow">Something nearby</p><h2 id="object-name"></h2></div><button class="object-close" id="object-close" aria-label="Close object actions">×</button></div><p id="object-description"></p><div class="object-actions" id="object-actions"></div></div><div class="scene-caption"><span class="live-indicator"></span><span id="scene-caption">Juniper is exploring the city - click a street to guide her</span></div></div>
-          <div class="world-actions">
-            <button class="action-button primary" data-action="feed"><span>◒</span> Give a snack</button>
-            <button class="action-button" data-action="play"><span>✧</span> Play together</button>
-            <button class="action-button" data-action="rest"><span>☾</span> Let Juniper rest</button>
-            <button class="action-button" id="track-juniper"><span>◎</span> Track Juniper</button>
-          </div>
-        </div>
+        <section class="world-panel card" id="world">
+          <div class="panel-heading world-heading"><div><p class="eyebrow">Juniper's landing site</p><h1>Wychmere, United Kingdom</h1></div><span class="weather-chip" id="weather-chip">Clear, 18 C</span></div>
+          <div class="scene-wrap"><div id="scene" aria-label="A low-poly UK high street where Juniper lives"></div><div class="scene-zoom" aria-label="City zoom controls"><button id="zoom-in" title="Zoom in">+</button><button id="zoom-out" title="Zoom out">-</button></div><div class="object-panel" id="object-panel" hidden><div class="object-panel-heading"><div><p class="eyebrow">Something nearby</p><h2 id="object-name"></h2></div><button class="object-close" id="object-close" aria-label="Close object actions">x</button></div><p id="object-description"></p><div class="object-actions" id="object-actions"></div></div><div class="scene-caption"><span class="live-indicator"></span><span id="scene-caption">Juniper is exploring the city - click a street to guide her</span></div></div>
+          <div class="world-actions"><button class="action-button" id="track-juniper">Track Juniper</button></div>
+        </section>
 
         <aside class="sidebar">
-          <section class="card profile-card">
-            <div class="profile-top"><div class="avatar">✦</div><div><p class="eyebrow">An intelligent visitor</p><h2>Juniper</h2><p class="muted" id="mood-label">Studying Earth carefully</p></div><span class="level-badge">LVL <strong id="level">3</strong></span></div>
-            <div class="stat-list">
-              <div class="stat"><div class="stat-label"><span>Energy</span><strong id="energy-value">72%</strong></div><div class="bar"><span id="energy-bar" class="energy"></span></div></div>
-              <div class="stat"><div class="stat-label"><span>Happiness</span><strong id="happiness-value">84%</strong></div><div class="bar"><span id="happiness-bar" class="happiness"></span></div></div>
-              <div class="stat"><div class="stat-label"><span>Curiosity</span><strong id="curiosity-value">91%</strong></div><div class="bar"><span id="curiosity-bar" class="curiosity"></span></div></div>
-            </div>
-          </section>
-
+          <section class="card profile-card"><div class="profile-top"><div class="avatar">*</div><div><p class="eyebrow">An intelligent visitor</p><h2>Juniper</h2><p class="muted">Studying Earth carefully</p></div></div></section>
+          <section class="card thoughts-card"><div class="panel-heading"><div><p class="eyebrow">Private thoughts</p><h2>What Juniper is thinking</h2></div><span class="thought-count" id="thought-count">0 entries</span></div><div class="thought-list" id="thought-list"></div></section>
           <section class="card interests-card"><div class="panel-heading"><div><p class="eyebrow">Current questions</p><h2>What Juniper is trying to understand</h2><p class="muted">Keep between 2 and 4 interests</p></div><div class="interest-actions"><button class="text-button default-action" id="develop-interest" autofocus>Juniper chooses</button><button class="text-button" id="add-interest">+ Add manually</button></div></div><div class="interest-list" id="interest-list"></div></section>
         </aside>
       </section>
 
-      <section class="lower-grid">
-        <section class="card thoughts-card"><div class="panel-heading"><div><p class="eyebrow">Private thoughts</p><h2>What Juniper is thinking</h2></div><span class="thought-count" id="thought-count">0 entries</span></div><div class="thought-list" id="thought-list"></div></section>
-        <section class="card research-card"><div class="panel-heading"><div><p class="eyebrow">Curiosity desk</p><h2>Research an interest</h2></div><span class="desk-icon">⌁</span></div><p class="research-copy">Juniper will search the live web, then ask your local Ollama model to make sense of the sources.</p><div class="research-form"><select id="research-topic" aria-label="Choose an interest"></select><select id="model-select" aria-label="Choose Ollama model"><option>Loading models…</option></select><button class="action-button primary" id="research-button">Research ↗</button></div><div class="research-result" id="research-result" hidden><div class="result-label">Juniper's field notes</div><p id="research-summary"></p><div class="source-list" id="source-list"></div></div><div class="research-note" id="research-note">Ollama status: checking local models…</div></section>
-      </section>
-
       <section class="card self-research-card"><div class="panel-heading"><div><p class="eyebrow">Juniper's own curiosity</p><h2>Let her browse the city of ideas</h2></div><span class="desk-icon">*</span></div><p class="research-copy">When enabled, Juniper may research her selected interest on her own. The server allows one autonomous web request every minute at minimum.</p><div class="self-research-controls"><label class="toggle-label"><input id="self-research-toggle" type="checkbox" /><span class="toggle"></span><span>Allow self-research</span></label><label class="interval-label" for="self-research-interval">Cooldown<select id="self-research-interval"><option value="60000">1 minute</option><option value="300000">5 minutes</option><option value="600000">10 minutes</option><option value="900000">15 minutes</option><option value="1800000">30 minutes</option></select></label></div><div class="self-research-actions"><button class="action-button" id="self-research-button">Research on her own</button><button class="text-button" id="self-research-override">Research now (override)</button></div><p class="research-note" id="self-research-status">Self-research is off. You remain in control of Juniper's outbound requests.</p></section>
+
+      <section class="card research-card"><div class="panel-heading"><div><p class="eyebrow">Curiosity desk</p><h2>Research an interest</h2></div><span class="desk-icon">~</span></div><p class="research-copy">Juniper will search the live web, then ask your local Ollama model to make sense of the sources.</p><div class="research-form"><select id="research-topic" aria-label="Choose an interest"></select><select id="model-select" aria-label="Choose Ollama model"><option>Loading models...</option></select><button class="action-button primary" id="research-button">Research</button></div><div class="research-result" id="research-result" hidden><div class="result-label">Juniper's field notes</div><p id="research-summary"></p><div class="source-list" id="source-list"></div></div><div class="research-note" id="research-note">Ollama status: checking local models...</div></section>
 
       <section class="card objects-card"><div class="panel-heading"><div><p class="eyebrow">UK street objects</p><h2>Objects around Wychmere</h2></div><button class="text-button" id="world-decision-button">Ask Juniper</button></div><p class="research-copy">Juniper can notice, use, and add small UK high-street objects. Click an object in the scene to interact with it.</p><div class="world-object-list" id="world-object-list"></div><p class="research-note" id="world-decision-status">The high street is waiting for its next little change.</p></section>
 
-      <footer><span>JUNIPER / A SMALL EXPERIMENT IN COMPANIONSHIP</span><span id="save-status">Saved locally</span></footer>
+      <footer><span>JUNIPER / A SENTIENT VISITOR ON EARTH</span><span id="save-status">Saved locally</span></footer>
     </main>
     <div class="toast" id="toast" role="status"></div>
     <script type="module" src="app.js"></script>

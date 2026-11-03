@@ -5,8 +5,6 @@ const MIN_INTERESTS = 2;
 const MAX_INTERESTS = 4;
 const DEFAULT_STATE = {
   worldVersion: 2,
-  stats: { energy: 72, happiness: 84, curiosity: 91 },
-  level: 3,
   interests: ["What is Earth?", "How humans communicate", "Why humans build cities", "Earth's living ecosystems"],
   removedInterests: [],
   researchHistory: [],
@@ -26,9 +24,12 @@ const DEFAULT_STATE = {
 };
 // DOM access and local state restoration.
 const $ = (id) => document.getElementById(id);
+const sessionResetGeneration = localStorage.getItem("juniper-reset-generation") || "0";
 const saved = JSON.parse(localStorage.getItem("juniper-state") || "null");
 const state = { ...structuredClone(DEFAULT_STATE), ...(saved || {}) };
-state.stats = { ...DEFAULT_STATE.stats, ...(saved?.stats || {}) };
+// Remove legacy pet metrics from migrated saves; Juniper is now observed through thoughts and actions.
+delete state.stats;
+delete state.level;
 state.interests = Array.isArray(state.interests) ? state.interests.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim()) : [];
 state.removedInterests = Array.isArray(state.removedInterests) ? state.removedInterests : [];
 state.researchHistory = Array.isArray(state.researchHistory) ? state.researchHistory : [];
@@ -42,11 +43,16 @@ if (state.interests.length > MAX_INTERESTS) { state.removedInterests.push(...sta
 for (const fallback of DEFAULT_STATE.interests) { if (state.interests.length >= MIN_INTERESTS) break; if (!state.interests.some((item) => item.toLowerCase() === fallback.toLowerCase())) state.interests.push(fallback); }
 
 // Normalize saved data so older versions cannot reintroduce unsupported state.
-function save() { localStorage.setItem("juniper-state", JSON.stringify(state)); $("save-status").textContent = "Saved just now"; setTimeout(() => ($("save-status").textContent = "Saved locally"), 1800); }
+function save() {
+  // A reset in another tab invalidates this tab's in-memory state.
+  if (localStorage.getItem("juniper-reset-generation") !== sessionResetGeneration) return;
+  localStorage.setItem("juniper-state", JSON.stringify(state)); $("save-status").textContent = "Saved just now"; setTimeout(() => ($("save-status").textContent = "Saved locally"), 1800);
+}
+window.addEventListener("storage", (event) => {
+  if (event.key === "juniper-reset-generation" && event.newValue !== sessionResetGeneration) location.reload();
+});
 function escapeHtml(value) { const div = document.createElement("div"); div.textContent = value; return div.innerHTML; }
 function render() {
-  ["energy", "happiness", "curiosity"].forEach((key) => { $(`${key}-value`).textContent = `${state.stats[key]}%`; $(`${key}-bar`).style.width = `${state.stats[key]}%`; });
-  $("level").textContent = state.level;
   $("interest-list").innerHTML = state.interests.map((item, index) => `<span class="interest">${escapeHtml(item)}<button class="remove-interest" data-interest-index="${index}" aria-label="Remove ${escapeHtml(item)}" title="Remove interest">x</button></span>`).join("");
   $("research-topic").innerHTML = state.interests.map((item) => `<option>${escapeHtml(item)}</option>`).join("");
   $("thought-count").textContent = `${state.thoughts.length} entries`;
@@ -62,11 +68,11 @@ function toast(message) { $("toast").textContent = message; $("toast").classList
 // UK high-street objects share their interaction rules with the 3D city.
 // UK street objects and their effects on Juniper's internal state.
 const OBJECT_TYPES = {
-  bench: { actions: [{ label: "Sit and observe", effect: { happiness: 2, energy: 8 }, thought: "A bench is an excellent human invention for watching the street." }, { label: "Inspect it", effect: { curiosity: 3 }, thought: "This bench is public, yet no one seems to own it. Fascinating." }] },
-  phonebox: { actions: [{ label: "Study the box", effect: { curiosity: 4 }, thought: "Humans built a room for communication and then mostly stopped using it." }, { label: "Look inside", effect: { happiness: 2, energy: -1 }, thought: "The red box contains layers of human history, stickers, and unanswered questions." }] },
-  litterbin: { actions: [{ label: "Inspect the label", effect: { curiosity: 3 }, thought: "Humans created a system for deciding where unwanted matter belongs." }, { label: "Keep the pavement tidy", effect: { happiness: 3, energy: -1 }, thought: "Small acts of maintenance may be one of the hidden systems holding cities together." }] },
-  tree: { actions: [{ label: "Study the leaves", effect: { curiosity: 4 }, thought: "This organism is quietly converting sunlight into a presence on the pavement." }, { label: "Rest in its shade", effect: { happiness: 4, energy: 3 }, thought: "The tree changes the street without asking anyone for permission." }] },
-  bush: { actions: [{ label: "Examine the greenery", effect: { curiosity: 3 }, thought: "Humans place living things beside concrete and call the arrangement decoration." }, { label: "Check for life", effect: { happiness: 3 }, thought: "There are smaller lives here that the humans walk past every day." }] },
+  bench: { actions: [{ label: "Sit and observe", thought: "A bench is an excellent human invention for watching the street." }, { label: "Inspect it", thought: "This bench is public, yet no one seems to own it. Fascinating." }] },
+  phonebox: { actions: [{ label: "Study the box", thought: "Humans built a room for communication and then mostly stopped using it." }, { label: "Look inside", thought: "The red box contains layers of human history, stickers, and unanswered questions." }] },
+  litterbin: { actions: [{ label: "Inspect the label", thought: "Humans created a system for deciding where unwanted matter belongs." }, { label: "Keep the pavement tidy", thought: "Small acts of maintenance may be one of the hidden systems holding cities together." }] },
+  tree: { actions: [{ label: "Study the leaves", thought: "This organism is quietly converting sunlight into a presence on the pavement." }, { label: "Rest in its shade", thought: "The tree changes the street without asking anyone for permission." }] },
+  bush: { actions: [{ label: "Examine the greenery", thought: "Humans place living things beside concrete and call the arrangement decoration." }, { label: "Check for life", thought: "There are smaller lives here that the humans walk past every day." }] },
 };
 const SUPPORTED_OBJECT_TYPES = new Set(Object.keys(OBJECT_TYPES));
 state.objects = state.objects.filter((object) => object && SUPPORTED_OBJECT_TYPES.has(object.type));
@@ -77,7 +83,6 @@ function closeObjectPanel() { $("object-panel").hidden = true; }
 function autonomouslyInteract(objectId) {
   const object = state.objects.find((item) => item.id === objectId); if (!object) return;
   const definition = OBJECT_TYPES[object.type] || OBJECT_TYPES.bench; const action = definition.actions[Math.floor(Math.random() * definition.actions.length)];
-  Object.entries(action.effect).forEach(([key, amount]) => { state.stats[key] = Math.max(0, Math.min(100, state.stats[key] + amount)); });
   addThought(action.thought, "*"); $("scene-caption").textContent = `Juniper is ${action.label.toLowerCase()} at ${object.name}`; toast(`Juniper ${action.label.toLowerCase()}`);
 }
 function showObjectPanel(objectId) {
@@ -87,7 +92,7 @@ function showObjectPanel(objectId) {
   $("object-actions").onclick = (event) => {
     const button = event.target.closest("[data-object-action]"); if (!button) return;
     if (button.dataset.objectAction === "remove") { if (object.createdBy === "city" && !window.confirm("Let Juniper pack away this city fixture?")) return; state.objects.splice(state.objects.findIndex((item) => item.id === object.id), 1); worldApi.removeObject(object.id); renderWorldObjects(); save(); closeObjectPanel(); toast(`${object.name} was packed away`); return; }
-    const action = definition.actions[Number(button.dataset.objectAction)]; Object.entries(action.effect).forEach(([key, amount]) => { state.stats[key] = Math.max(0, Math.min(100, state.stats[key] + amount)); }); addThought(action.thought, "*"); $("scene-caption").textContent = `Juniper is interacting with ${object.name}`; toast(action.label); closeObjectPanel();
+    const action = definition.actions[Number(button.dataset.objectAction)]; addThought(action.thought, "*"); $("scene-caption").textContent = `Juniper is interacting with ${object.name}`; toast(action.label); closeObjectPanel();
   };
 }
 $("object-close").addEventListener("click", closeObjectPanel);
@@ -114,28 +119,25 @@ async function loadOllamaModels() {
   try { const response = await fetch("/api/models"); if (!response.ok) throw new Error(); const data = await response.json(); $("model-select").innerHTML = data.models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join("") || '<option value="">No models installed</option>'; if (data.defaultModel && data.models.includes(data.defaultModel)) $("model-select").value = data.defaultModel; $("research-note").textContent = `${data.models.length} local Ollama model${data.models.length === 1 ? "" : "s"} available.`; if (Date.now() - Number(localStorage.getItem("juniper-last-ai-thought") || 0) > 300000) void addGeneratedThought("I detect a new question forming about this city.", "Juniper is waking up and observing Wychmere, a UK city where she has landed.", "~", true); } catch { $("model-select").innerHTML = '<option value="">Ollama unavailable</option>'; $("research-note").textContent = "Ollama unavailable - start Ollama, then refresh this page."; }
 }
 
-document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => {
-  const action = button.dataset.action;
-  if (action === "feed") { state.stats.energy = Math.min(100, state.stats.energy + 10); state.stats.happiness = Math.min(100, state.stats.happiness + 4); $("mood-label").textContent = "Feeling pleasantly peckish"; $("scene-caption").textContent = "Juniper is nibbling a snack near the bakery"; void addGeneratedThought("The moonberries are sweet today. I saved the biggest one for you.", "Juniper just ate a snack near the bakery and feels pleasantly peckish.", "o"); toast("Juniper enjoyed the snack"); }
-  if (action === "play") { state.stats.happiness = Math.min(100, state.stats.happiness + 9); state.stats.energy = Math.max(0, state.stats.energy - 6); $("mood-label").textContent = "Running a social experiment"; $("scene-caption").textContent = "Juniper is observing human life along the street"; void addGeneratedThought("Play may be a form of social research. I learned that your laughter changes my internal light patterns.", "Juniper is spending time with her human companion in Wychmere, the UK city where she landed.", "*"); toast("Juniper enjoyed the experiment"); }
-  if (action === "rest") { state.stats.energy = Math.min(100, state.stats.energy + 15); $("mood-label").textContent = "Feeling soft and sleepy"; $("scene-caption").textContent = "Juniper is resting in the little city park"; void addGeneratedThought("I am going to dream about the places we have not explored yet.", "Juniper is resting in the city park after a busy day.", "z"); toast("Juniper is resting"); }
-  save();
-}));
-
 $("research-button").addEventListener("click", async () => {
   const query = $("research-topic").value; const model = $("model-select").value; if (!query || !model) return toast("Choose an interest and an available Ollama model");
   const button = $("research-button"); button.disabled = true; button.textContent = "Thinking..."; $("research-result").hidden = true;
-  try { const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, ...researchContext() }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Research failed"); showResearchResult(data); rememberResearch(query, data); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research ->"; }
+  try { const response = await fetch("/api/research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, ...researchContext() }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Research failed"); showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research"; }
 });
 
 // Autonomous research scheduling and interest evolution.
 function formatCooldown(milliseconds) { const minutes = Math.max(1, Math.ceil(milliseconds / 60000)); return `${minutes} minute${minutes === 1 ? "" : "s"}`; }
 function syncSelfResearchStatus(message) { $("self-research-status").textContent = message; }
 function applyInterestUpdate(update) {
-  if (!update || !["add", "remove", "replace", "keep"].includes(update.action)) return "";
+  if (!update) return "Juniper requested an invalid change: Ollama returned no interest decision.";
+  if (!["add", "remove", "replace", "keep"].includes(update.action)) return `Juniper requested an invalid change: ${String(update.action || "no action")} was not a recognised interest action.`;
   const candidate = String(update.interest || "").trim();
   const replacement = String(update.removeInterest || "").trim();
   const isAllowedNewInterest = candidate && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase());
+  const attemptedChange = update.action === "replace"
+    ? `replace "${replacement || "an unspecified interest"}" with "${candidate || "an unspecified new interest"}"`
+    : `${update.action} "${candidate || "an unspecified interest"}"`;
+  const invalidChange = (reason) => `Juniper requested an invalid change: she tried to ${attemptedChange}, but ${reason}.`;
   if (update.action === "replace" && isAllowedNewInterest && replacement && state.interests.length > MIN_INTERESTS) {
     const index = state.interests.findIndex((item) => item.toLowerCase() === replacement.toLowerCase());
     if (index >= 0) {
@@ -148,7 +150,14 @@ function applyInterestUpdate(update) {
   }
   if (update.action === "add" && candidate && state.interests.length < MAX_INTERESTS && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase())) { state.interests.push(candidate); render(); save(); return `Juniper added "${candidate}" to her interests.`; }
   if (update.action === "remove" && candidate && state.interests.length > MIN_INTERESTS) { const index = state.interests.findIndex((item) => item.toLowerCase() === candidate.toLowerCase()); if (index >= 0) { state.interests.splice(index, 1); state.removedInterests.push(candidate); render(); save(); return `Juniper removed "${candidate}" from her interests.`; } }
-  return "";
+  if (update.action === "keep") return "";
+  if (update.action === "add" && state.interests.length >= MAX_INTERESTS) return invalidChange(`her list already has ${MAX_INTERESTS} interests`);
+  if (update.action === "remove" && state.interests.length <= MIN_INTERESTS) return invalidChange(`she must keep at least ${MIN_INTERESTS} interests`);
+  if (update.action === "replace" && state.interests.length <= MIN_INTERESTS) return invalidChange(`she must keep at least ${MIN_INTERESTS} interests`);
+  if (update.action === "replace" && !replacement) return invalidChange("no existing interest was identified for removal");
+  if (update.action === "replace" && !state.interests.some((item) => item.toLowerCase() === replacement.toLowerCase())) return invalidChange(`"${replacement}" is not currently one of her interests`);
+  if (candidate && !isAllowedNewInterest) return invalidChange(`"${candidate}" is already present or was explicitly removed`);
+  return invalidChange("the request did not meet the interest rules");
 }
 function nextSelfResearchTopic() {
   if (!state.interests.length) return "";
@@ -169,7 +178,7 @@ async function runSelfResearch(override = false) {
   if (!override && !$("self-research-toggle").checked) return;
   const query = override ? $("research-topic").value : nextSelfResearchTopic(); const model = $("model-select").value; if (!query || !model) return syncSelfResearchStatus(!query ? "Juniper has no current interests to research right now." : "Choose an Ollama model before Juniper researches.");
   const button = $("self-research-button"); button.disabled = true; syncSelfResearchStatus(override ? "Juniper is using her one-time override..." : "Juniper is looking something up...");
-  try { const response = await fetch("/api/self-research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, override, interests: state.interests, ...researchContext() }) }); const data = await response.json(); if (!response.ok) { if (response.status === 429) syncSelfResearchStatus(`Juniper's web cooldown is active. Try again in ${formatCooldown(data.retryAfterMs)}.`); throw new Error(data.error || "Self-research failed"); } showResearchResult(data); rememberResearch(query, data); state.stats.curiosity = Math.min(100, state.stats.curiosity + 3); addThought(data.thought, "~"); const change = applyInterestUpdate(data.interestUpdate); localStorage.setItem("juniper-self-research-next", data.nextAllowedAt); syncSelfResearchStatus(`${change || `Juniper kept "${query}" on her list.`} Next automatic check after ${new Date(data.nextAllowedAt).toLocaleTimeString()}.`); toast(change || `Juniper researched "${query}" on her own`); } catch (error) { if (!String(error.message).includes("breathing room")) syncSelfResearchStatus(error.message); } finally { button.disabled = false; }
+  try { const response = await fetch("/api/self-research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, override, interests: state.interests, ...researchContext() }) }); const data = await response.json(); if (!response.ok) { if (response.status === 429) syncSelfResearchStatus(`Juniper's web cooldown is active. Try again in ${formatCooldown(data.retryAfterMs)}.`); throw new Error(data.error || "Self-research failed"); } showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); const change = applyInterestUpdate(data.interestUpdate); localStorage.setItem("juniper-self-research-next", data.nextAllowedAt); syncSelfResearchStatus(`${change || `Juniper kept "${query}" on her list.`} Next automatic check after ${new Date(data.nextAllowedAt).toLocaleTimeString()}.`); toast(change || `Juniper researched "${query}" on her own`); } catch (error) { if (!String(error.message).includes("breathing room")) syncSelfResearchStatus(error.message); } finally { button.disabled = false; }
 }
 $("self-research-toggle").addEventListener("change", () => { const enabled = $("self-research-toggle").checked; localStorage.setItem("juniper-self-research-enabled", String(enabled)); syncSelfResearchStatus(enabled ? "Self-research enabled. Juniper will avoid her most recent topics." : "Self-research is off. You remain in control of Juniper's outbound requests."); });
 $("self-research-interval").addEventListener("change", () => localStorage.setItem("juniper-self-research-interval", $("self-research-interval").value));
@@ -208,7 +217,17 @@ async function askJuniperToMakeRoom() {
 }
 $("develop-interest").addEventListener("click", (event) => { if (state.interests.length >= MAX_INTERESTS) { event.stopImmediatePropagation(); void askJuniperToMakeRoom(); } }, true);
 // Final page setup: render saved state and start the Three.js world.
-$("reset-button").addEventListener("click", () => { if (window.confirm("Reset Juniper's local world and memories?")) { localStorage.removeItem("juniper-state"); location.reload(); } });
+$("reset-button").addEventListener("click", () => {
+  if (!window.confirm("Reset Juniper's local world and memories?")) return;
+  localStorage.removeItem("juniper-state");
+  localStorage.removeItem("juniper-self-research-enabled");
+  localStorage.removeItem("juniper-self-research-interval");
+  localStorage.removeItem("juniper-self-research-next");
+  localStorage.removeItem("juniper-last-self-research-topic");
+  localStorage.removeItem("juniper-last-ai-thought");
+  localStorage.setItem("juniper-reset-generation", String(Date.now()));
+  location.reload();
+});
 
 save();
 render();
