@@ -26,10 +26,10 @@ The default configuration uses `phi4:latest` when that model is available. You c
 ## What is implemented
 
 - Animated 3D UK city, angular alien character with sensor crown and three eyes, buildings, lighting, fog, and responsive layout.
-- Fresh Wychmere high-street layout built around one straight road, with continuous pavements and open sight lines through the shops.
-- Low-poly UK high street with a straight two-lane road, continuous pavements, apartments above shops, and readable shop signs.
+- Seeded, explorable Wychmere region with connected city districts, villages, forests, lakes, cabins, ruins, landmarks, and public paths.
+- Deterministic chunk-based low-poly world generation keeps each user's terrain and landmarks the same between browser sessions.
 - High-street details including supermarkets, betting shops, pizza and kebab shops, lane markings, double yellow lines, a zebra crossing, parked cars, evenly spaced street lights, and a bus stop.
-- Larger explorable district with mouse-wheel and on-screen zoom controls.
+- Larger explorable region with mouse-wheel and on-screen zoom controls.
 - Autonomous walking between city destinations; click a street or plaza to guide Juniper.
 - Optional third-person tracking camera that follows Juniper as she walks through the district.
 - A smaller lavender alien companion who roams the city independently alongside Juniper.
@@ -49,11 +49,16 @@ The default configuration uses `phi4:latest` when that model is available. You c
 - A compact structured research journal stores recent summaries and sources locally. The backend uses it for topic-diversity checks and asks Ollama for a second, more original topic when a proposed rabbit hole is too similar.
 - Research history and explicitly removed interests are saved locally and included in future Ollama prompts, helping Juniper avoid immediately repeating herself.
 - The Three.js frontend is split into `world.js` for scene interaction, `city.js` for city geometry, and `pet.js` for character geometry.
-- Persistent UK street objects including benches, a red telephone box, council litter bins, street trees, and bushes.
+- Persistent UK world objects including benches, a red telephone box, council litter bins, trees, and bushes.
 - Clicking a world object opens observational actions that add context to Juniper's thoughts.
 - Juniper can ask Ollama to add, remove, or leave a safe world object unchanged; the application validates every proposed change before applying it.
 - The world-object list is clickable: selecting an object focuses the camera on its saved coordinates and opens its interaction panel.
 - Reset control for clearing the local save, autonomous-research schedule, and stale state in other open tabs.
+- The generated world seed is saved with Juniper's browser state and is replaced only when the Reset control is used.
+- Named landmarks including an observatory, quarry, wetlands, castle ruins, market, grove, station, and river crossing.
+- Persistent landmark discoveries and location-based memories that Juniper records when she explores or interacts with a place.
+- Moving wildlife, timed weather and day/night changes, and temporary regional events that give Juniper reasons to revisit places.
+- Landmark routes, contextual observations, and an in-world activity panel showing places Juniper remembers and the latest event.
 
 ## Next production step
 
@@ -64,7 +69,7 @@ The research endpoint is intentionally server-side: the browser never talks dire
 - `server.js` — Express server, Ollama integration, web research, cooldowns, and world-change decisions.
 - `app.js` — Browser state, UI events, local persistence, research, interests, and object interactions.
 - `world.js` — Three.js camera, controls, movement, tracking view, and scene interaction.
-- `city.js` — English street geometry, buildings, roads, street furniture, and interactive objects.
+- `city.js` — seeded chunk generation, Wychmere's city, villages, terrain, lakes, forests, landmarks, and interactive objects.
 - `pet.js` — Low-poly Juniper and friend character meshes.
 - `index.html` and `styles.css` — Interface structure and visual styling.
 

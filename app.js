@@ -4,11 +4,15 @@ import { createWorld } from "./world.js";
 const MIN_INTERESTS = 2;
 const MAX_INTERESTS = 4;
 const DEFAULT_STATE = {
-  worldVersion: 2,
+  worldVersion: 4,
+  worldSeed: null,
   interests: ["What is Earth?", "How humans communicate", "Why humans build cities", "Earth's living ecosystems"],
   removedInterests: [],
   researchHistory: [],
   researchJournal: [],
+  memories: [],
+  discoveredLandmarks: [],
+  worldEvents: [],
   objects: [
     { id: "bench-1", type: "bench", name: "High-street bench", description: "A practical place to observe human life and passing traffic.", x: -13, z: 6.4, createdBy: "city" },
     { id: "phonebox-1", type: "phonebox", name: "Red telephone box", description: "A bright red British street landmark Juniper cannot yet explain.", x: 8, z: -6.4, createdBy: "city" },
@@ -27,6 +31,10 @@ const $ = (id) => document.getElementById(id);
 const sessionResetGeneration = localStorage.getItem("juniper-reset-generation") || "0";
 const saved = JSON.parse(localStorage.getItem("juniper-state") || "null");
 const state = { ...structuredClone(DEFAULT_STATE), ...(saved || {}) };
+const createWorldSeed = () => {
+  if (window.crypto?.getRandomValues) return window.crypto.getRandomValues(new Uint32Array(1))[0];
+  return Math.floor(Math.random() * 0xffffffff);
+};
 // Remove legacy pet metrics from migrated saves; Juniper is now observed through thoughts and actions.
 delete state.stats;
 delete state.level;
@@ -34,9 +42,13 @@ state.interests = Array.isArray(state.interests) ? state.interests.filter((item)
 state.removedInterests = Array.isArray(state.removedInterests) ? state.removedInterests : [];
 state.researchHistory = Array.isArray(state.researchHistory) ? state.researchHistory : [];
 state.researchJournal = Array.isArray(state.researchJournal) ? state.researchJournal.filter((entry) => entry && typeof entry.query === "string") : [];
+state.memories = Array.isArray(state.memories) ? state.memories : [];
+state.discoveredLandmarks = Array.isArray(state.discoveredLandmarks) ? state.discoveredLandmarks : [];
+state.worldEvents = Array.isArray(state.worldEvents) ? state.worldEvents : [];
 if (!state.researchJournal.length && state.researchHistory.length) state.researchJournal = state.researchHistory.slice(-12).map((query) => ({ query, summary: "", sources: [], timestamp: "" }));
 state.objects = Array.isArray(state.objects) ? state.objects : structuredClone(DEFAULT_STATE.objects);
-if (state.worldVersion !== DEFAULT_STATE.worldVersion) { state.worldVersion = DEFAULT_STATE.worldVersion; state.objects = structuredClone(DEFAULT_STATE.objects); }
+if (state.worldVersion !== DEFAULT_STATE.worldVersion) { state.worldVersion = DEFAULT_STATE.worldVersion; state.worldSeed = createWorldSeed(); state.objects = structuredClone(DEFAULT_STATE.objects); }
+if (!Number.isInteger(state.worldSeed)) state.worldSeed = createWorldSeed();
 state.thoughts = Array.isArray(state.thoughts) ? state.thoughts : [];
 state.interests = [...new Map(state.interests.map((item) => [item.toLowerCase(), item])).values()];
 if (state.interests.length > MAX_INTERESTS) { state.removedInterests.push(...state.interests.slice(MAX_INTERESTS)); state.interests = state.interests.slice(0, MAX_INTERESTS); }
@@ -57,6 +69,8 @@ function render() {
   $("research-topic").innerHTML = state.interests.map((item) => `<option>${escapeHtml(item)}</option>`).join("");
   $("thought-count").textContent = `${state.thoughts.length} entries`;
   $("thought-list").innerHTML = state.thoughts.map((thought) => `<article class="thought"><span class="thought-icon">${escapeHtml(thought.icon)}</span><span>${escapeHtml(thought.text)}</span><time>${thought.time}</time></article>`).join("");
+  const discoveries = $("landmark-list");
+  if (discoveries) discoveries.innerHTML = state.discoveredLandmarks.length ? state.discoveredLandmarks.map((landmark) => `<span class="landmark-tag">${escapeHtml(landmark.name)}</span>`).join("") : '<span class="empty-discoveries">Juniper has not discovered any landmarks yet.</span>';
 }
 function addThought(text, icon = "*") { state.thoughts.unshift({ text, icon, time: "Just now" }); state.thoughts = state.thoughts.slice(0, 12); render(); save(); }
 async function addGeneratedThought(fallback, context, icon = "*", markWake = false) {
@@ -95,6 +109,52 @@ function showObjectPanel(objectId) {
     const action = definition.actions[Number(button.dataset.objectAction)]; addThought(action.thought, "*"); $("scene-caption").textContent = `Juniper is interacting with ${object.name}`; toast(action.label); closeObjectPanel();
   };
 }
+function addMemory(landmark, text) {
+  state.memories.unshift({ landmarkId: landmark.id, landmarkName: landmark.name, text, time: new Date().toISOString() });
+  state.memories = state.memories.slice(0, 24);
+  save();
+}
+function showLandmarkPanel(landmark) {
+  if (!landmark) return;
+  $("object-name").textContent = landmark.name;
+  $("object-description").textContent = landmark.description;
+  $("object-actions").innerHTML = '<button data-landmark-action="observe">Record observation</button><button data-landmark-action="route">Guide Juniper here</button>';
+  $("object-panel").hidden = false;
+  $("object-actions").onclick = (event) => {
+    const button = event.target.closest("[data-landmark-action]");
+    if (!button) return;
+    if (button.dataset.landmarkAction === "route") {
+      worldApi.focusLandmark(landmark.id);
+      closeObjectPanel();
+      return;
+    }
+    const thought = `I have found ${landmark.name}. ${landmark.description}`;
+    addMemory(landmark, thought);
+    addThought(thought, "~");
+    toast(`Juniper recorded ${landmark.name}`);
+    closeObjectPanel();
+  };
+}
+function recordLandmarkVisit(landmark) {
+  if (!state.discoveredLandmarks.some((item) => item.id === landmark.id)) {
+    state.discoveredLandmarks.push({ id: landmark.id, name: landmark.name });
+    addMemory(landmark, `I reached ${landmark.name}. ${landmark.description}`);
+    addThought(`I have discovered ${landmark.name}. ${landmark.description}`, "~");
+    render();
+    toast(`Juniper discovered ${landmark.name}`);
+  }
+}
+function recordWorldEvent(event) {
+  state.worldEvents.unshift({ ...event, time: new Date().toISOString() });
+  state.worldEvents = state.worldEvents.slice(0, 12);
+  $("world-event-status").textContent = `${event.name} near ${event.location}.`;
+  addThought(`${event.name}: ${event.description}`, "*");
+  save();
+}
+function updateWorldTime({ hour, minute, weather, isNight }) {
+  const clock = `${String(Math.floor(hour)).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  $("weather-chip").textContent = `${clock} · ${weather}${isNight ? " · Night" : ""}`;
+}
 $("object-close").addEventListener("click", closeObjectPanel);
 $("world-object-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-world-object-id]"); if (!button) return;
@@ -128,7 +188,7 @@ $("research-button").addEventListener("click", async () => {
 // Autonomous research scheduling and interest evolution.
 function formatCooldown(milliseconds) { const minutes = Math.max(1, Math.ceil(milliseconds / 60000)); return `${minutes} minute${minutes === 1 ? "" : "s"}`; }
 function syncSelfResearchStatus(message) { $("self-research-status").textContent = message; }
-function applyInterestUpdate(update) {
+async function applyInterestUpdate(update) {
   if (!update) return "Juniper requested an invalid change: Ollama returned no interest decision.";
   if (!["add", "remove", "replace", "keep"].includes(update.action)) return `Juniper requested an invalid change: ${String(update.action || "no action")} was not a recognised interest action.`;
   const candidate = String(update.interest || "").trim();
@@ -147,6 +207,15 @@ function applyInterestUpdate(update) {
       render(); save();
       return `Juniper followed a new rabbit hole: replaced "${removed}" with "${candidate}".`;
     }
+  }
+  if (update.action === "add" && candidate && state.interests.length >= MAX_INTERESTS) {
+    await askJuniperToMakeRoom();
+    if (state.interests.length < MAX_INTERESTS && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase())) {
+      state.interests.push(candidate);
+      render(); save();
+      return `Juniper made room first, then added "${candidate}" to her interests.`;
+    }
+    return invalidChange("her list was full and no suitable interest was removed first");
   }
   if (update.action === "add" && candidate && state.interests.length < MAX_INTERESTS && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase())) { state.interests.push(candidate); render(); save(); return `Juniper added "${candidate}" to her interests.`; }
   if (update.action === "remove" && candidate && state.interests.length > MIN_INTERESTS) { const index = state.interests.findIndex((item) => item.toLowerCase() === candidate.toLowerCase()); if (index >= 0) { state.interests.splice(index, 1); state.removedInterests.push(candidate); render(); save(); return `Juniper removed "${candidate}" from her interests.`; } }
@@ -178,7 +247,7 @@ async function runSelfResearch(override = false) {
   if (!override && !$("self-research-toggle").checked) return;
   const query = override ? $("research-topic").value : nextSelfResearchTopic(); const model = $("model-select").value; if (!query || !model) return syncSelfResearchStatus(!query ? "Juniper has no current interests to research right now." : "Choose an Ollama model before Juniper researches.");
   const button = $("self-research-button"); button.disabled = true; syncSelfResearchStatus(override ? "Juniper is using her one-time override..." : "Juniper is looking something up...");
-  try { const response = await fetch("/api/self-research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, override, interests: state.interests, ...researchContext() }) }); const data = await response.json(); if (!response.ok) { if (response.status === 429) syncSelfResearchStatus(`Juniper's web cooldown is active. Try again in ${formatCooldown(data.retryAfterMs)}.`); throw new Error(data.error || "Self-research failed"); } showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); const change = applyInterestUpdate(data.interestUpdate); localStorage.setItem("juniper-self-research-next", data.nextAllowedAt); syncSelfResearchStatus(`${change || `Juniper kept "${query}" on her list.`} Next automatic check after ${new Date(data.nextAllowedAt).toLocaleTimeString()}.`); toast(change || `Juniper researched "${query}" on her own`); } catch (error) { if (!String(error.message).includes("breathing room")) syncSelfResearchStatus(error.message); } finally { button.disabled = false; }
+  try { const response = await fetch("/api/self-research", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, override, interests: state.interests, ...researchContext() }) }); const data = await response.json(); if (!response.ok) { if (response.status === 429) syncSelfResearchStatus(`Juniper cannot research "${query}" yet. The web cooldown has ${formatCooldown(data.retryAfterMs)} remaining.`); throw new Error(data.error || "Self-research failed"); } showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); const change = await applyInterestUpdate(data.interestUpdate); const update = change || `Juniper kept "${query}" on her list.`; localStorage.setItem("juniper-self-research-next", data.nextAllowedAt); syncSelfResearchStatus(`Juniper researched "${query}". ${update} Next automatic check after ${new Date(data.nextAllowedAt).toLocaleTimeString()}.`); toast(`Juniper researched "${query}"`); } catch (error) { if (!String(error.message).includes("breathing room")) syncSelfResearchStatus(error.message); } finally { button.disabled = false; }
 }
 $("self-research-toggle").addEventListener("change", () => { const enabled = $("self-research-toggle").checked; localStorage.setItem("juniper-self-research-enabled", String(enabled)); syncSelfResearchStatus(enabled ? "Self-research enabled. Juniper will avoid her most recent topics." : "Self-research is off. You remain in control of Juniper's outbound requests."); });
 $("self-research-interval").addEventListener("change", () => localStorage.setItem("juniper-self-research-interval", $("self-research-interval").value));
@@ -187,6 +256,37 @@ $("self-research-override").addEventListener("click", () => { if (window.confirm
 function setupSelfResearch() { $("self-research-toggle").checked = localStorage.getItem("juniper-self-research-enabled") === "true"; const savedInterval = localStorage.getItem("juniper-self-research-interval"); if (savedInterval) $("self-research-interval").value = savedInterval; syncSelfResearchStatus($("self-research-toggle").checked ? "Self-research enabled. Juniper will avoid her most recent topics." : "Self-research is off. You remain in control of Juniper's outbound requests."); setInterval(() => { if (!$("self-research-toggle").checked) return; const nextAllowed = Date.parse(localStorage.getItem("juniper-self-research-next") || ""); const interval = Number($("self-research-interval").value); if (!nextAllowed || Date.now() >= nextAllowed + Math.max(0, interval - 60000)) void runSelfResearch(false); }, 30000); }
 
 // Manual interest management and Ollama-assisted interest changes.
+async function developInterestWithCapacity() {
+  if (state.interests.length >= MAX_INTERESTS) await askJuniperToMakeRoom();
+  if (state.interests.length >= MAX_INTERESTS) return;
+  const model = $("model-select").value;
+  if (!model) return toast("Choose an available Ollama model first");
+  const button = $("develop-interest");
+  button.disabled = true;
+  button.textContent = "Thinking...";
+  try {
+    const response = await fetch("/api/interest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), researchHistory: state.researchHistory, removedInterests: state.removedInterests }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Juniper could not develop an interest");
+    const candidate = String(data.interest || "").trim();
+    if (data.action !== "add" || !candidate || state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase()) || state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase())) throw new Error("Juniper suggested an invalid new interest - try again");
+    state.interests.push(candidate);
+    render(); save(); addThought(data.reason, "*"); toast(`Juniper is now curious about ${candidate}`);
+  } catch (error) { toast(error.message); }
+  finally { button.disabled = false; button.textContent = "Juniper chooses"; }
+}
+$("develop-interest").addEventListener("click", (event) => {
+  if (state.interests.length >= MAX_INTERESTS) {
+    event.stopImmediatePropagation();
+    void developInterestWithCapacity();
+  }
+}, true);
+$("add-interest").addEventListener("click", (event) => {
+  if (state.interests.length >= MAX_INTERESTS) {
+    event.stopImmediatePropagation();
+    toast(`Juniper has ${MAX_INTERESTS} interests already - remove one first`);
+  }
+}, true);
 $("add-interest").addEventListener("click", () => { const interest = window.prompt("What should Juniper be curious about?")?.trim(); if (!interest) return; state.interests.push(interest); state.removedInterests = state.removedInterests.filter((item) => item.toLowerCase() !== interest.toLowerCase()); render(); save(); void addGeneratedThought(`A new question arrived: "${interest}". I cannot wait to follow it.`, `Juniper has just discovered a new interest called "${interest}".`, "*"); toast("A new interest joined the city"); });
 $("develop-interest").addEventListener("click", async () => { const model = $("model-select").value; if (!model) return toast("Choose an available Ollama model first"); const button = $("develop-interest"); button.disabled = true; button.textContent = "Thinking..."; try { const response = await fetch("/api/interest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), researchHistory: state.researchHistory, removedInterests: state.removedInterests }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Juniper could not develop an interest"); if (state.interests.some((item) => item.toLowerCase() === data.interest.toLowerCase()) || state.removedInterests.some((item) => item.toLowerCase() === data.interest.toLowerCase())) throw new Error("Juniper suggested a repeated or removed interest - try again"); state.interests.push(data.interest); render(); save(); addThought(data.reason, "*"); toast(`Juniper is now curious about ${data.interest}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Juniper chooses"; } });
 
@@ -198,7 +298,7 @@ $("world-decision-button").addEventListener("click", async () => {
     const response = await fetch("/api/world-decision", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), objects: state.objects }) });
     const decision = await response.json(); if (!response.ok) throw new Error(decision.error || "Juniper could not decide");
     const allowedTypes = new Set(Object.keys(OBJECT_TYPES));
-    if (decision.action === "add" && allowedTypes.has(decision.type) && decision.name && Number.isFinite(decision.x) && Number.isFinite(decision.z) && Math.abs(decision.x) <= 30 && Math.abs(decision.z) <= 8 && state.objects.length < 20) {
+    if (decision.action === "add" && allowedTypes.has(decision.type) && decision.name && Number.isFinite(decision.x) && Number.isFinite(decision.z) && Math.abs(decision.x) <= 108 && Math.abs(decision.z) <= 108 && state.objects.length < 20) {
       const object = { id: `juniper-${Date.now()}`, type: decision.type, name: decision.name, description: decision.description || "A new little part of Juniper's city.", x: decision.x, z: decision.z, createdBy: "juniper" };
       state.objects.push(object); worldApi.addObject(object); renderWorldObjects(); save(); $("world-decision-status").textContent = decision.reason; toast(`Juniper added ${object.name}`);
     } else if (decision.action === "remove") {
@@ -209,13 +309,11 @@ $("world-decision-button").addEventListener("click", async () => {
 });
 $("interest-list").addEventListener("click", (event) => { const button = event.target.closest("[data-interest-index]"); if (!button) return; const index = Number(button.dataset.interestIndex); const interest = state.interests[index]; if (!interest || !window.confirm(`Remove Juniper's interest in "${interest}"?`)) return; state.interests.splice(index, 1); if (!state.removedInterests.some((item) => item.toLowerCase() === interest.toLowerCase())) state.removedInterests.push(interest); render(); save(); toast(`Removed "${interest}" from Juniper's interests`); });
 $("interest-list").addEventListener("click", (event) => { const button = event.target.closest("[data-interest-index]"); if (button && state.interests.length <= MIN_INTERESTS) { event.stopImmediatePropagation(); toast(`Juniper needs to keep at least ${MIN_INTERESTS} interests`); } }, true);
-$("add-interest").addEventListener("click", (event) => { if (state.interests.length >= MAX_INTERESTS) { event.stopImmediatePropagation(); toast(`Juniper has ${MAX_INTERESTS} interests already - remove one first`); } }, true);
 async function askJuniperToMakeRoom() {
   const button = $("develop-interest"); const model = $("model-select").value; if (!model) return toast("Choose an available Ollama model first");
   button.disabled = true; button.textContent = "Choosing...";
   try { const response = await fetch("/api/interest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model, interests: state.interests, thoughts: state.thoughts.map((thought) => thought.text), researchHistory: state.researchHistory, removedInterests: state.removedInterests }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Juniper could not choose an interest to release"); const index = state.interests.findIndex((item) => item.toLowerCase() === String(data.interest || "").toLowerCase()); if (data.action !== "remove" || index < 0 || index >= state.interests.length - MIN_INTERESTS) throw new Error("Juniper could not find a suitable interest to release"); const removed = state.interests.splice(index, 1)[0]; state.removedInterests.push(removed); render(); save(); addThought(data.reason || `I am making room by saying goodbye to ${removed} for now.`, "*"); toast(`Juniper let go of "${removed}" to make room`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Juniper chooses"; }
 }
-$("develop-interest").addEventListener("click", (event) => { if (state.interests.length >= MAX_INTERESTS) { event.stopImmediatePropagation(); void askJuniperToMakeRoom(); } }, true);
 // Final page setup: render saved state and start the Three.js world.
 $("reset-button").addEventListener("click", () => {
   if (!window.confirm("Reset Juniper's local world and memories?")) return;
@@ -232,6 +330,6 @@ $("reset-button").addEventListener("click", () => {
 save();
 render();
 renderWorldObjects();
-worldApi = createWorld({ objects: state.objects, onCaption: (caption) => { $("scene-caption").textContent = caption; }, onObjectClick: showObjectPanel, onAutonomousObject: autonomouslyInteract });
+worldApi = createWorld({ worldSeed: state.worldSeed, objects: state.objects, onCaption: (caption) => { $("scene-caption").textContent = caption; }, onObjectClick: showObjectPanel, onLandmarkClick: showLandmarkPanel, onLandmarkVisit: recordLandmarkVisit, onWorldEvent: recordWorldEvent, onWorldTime: updateWorldTime, onAutonomousObject: autonomouslyInteract });
 setupSelfResearch();
 void loadOllamaModels();

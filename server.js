@@ -197,33 +197,80 @@ app.post("/api/world-decision", async (req, res) => {
 
 // Search provider adapter: keep outbound web access server-side.
 async function searchWeb(query) {
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const response = await fetch(url, {
-    headers: { "user-agent": "JuniperResearch/0.1 (+local app)" },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok)
-    throw Object.assign(new Error(`Search returned ${response.status}`), {
+  const searchUrls = [
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+    `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
+  ];
+
+  let providerError;
+  for (const url of searchUrls) {
+    try {
+      const response = await fetch(url, {
+        // DuckDuckGo serves an empty result page to the app-specific user-agent.
+        // A normal browser user-agent returns the same public search results.
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) {
+        providerError = new Error(`Search returned ${response.status}`);
+        continue;
+      }
+
+      const sources = extractSearchSources(await response.text());
+      if (sources.length > 0) return sources;
+    } catch (error) {
+      providerError = error;
+    }
+  }
+
+  if (providerError) {
+    throw Object.assign(providerError, {
       status: 502,
       publicMessage: "The web search provider did not respond.",
     });
-  const html = await response.text();
+  }
+  return [];
+}
+
+function extractSearchSources(html) {
   const sources = [];
   const resultPattern =
-    /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+    /<a\b[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+
   for (const match of html.matchAll(resultPattern)) {
-    const link = decodeHtml(match[1]);
-    const resolvedUrl = link.startsWith("//") ? `https:${link}` : link;
-    if (!resolvedUrl.startsWith("http")) continue;
+    const afterResult = html.slice(match.index + match[0].length);
+    const snippetMatch = afterResult.match(
+      /class=["'][^"']*(?:result__snippet|result-snippet)[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|td)>/i,
+    );
+    const resolvedUrl = resolveSearchUrl(match[1]);
+    const title = cleanText(match[2]);
+    const snippet = cleanText(snippetMatch?.[1] || "");
+
+    if (!resolvedUrl || !title) continue;
     sources.push({
       id: sources.length + 1,
-      title: cleanText(match[2]),
+      title,
       url: resolvedUrl,
-      snippet: cleanText(match[3]),
+      snippet,
     });
     if (sources.length === 6) break;
   }
+
   return sources;
+}
+
+function resolveSearchUrl(value) {
+  try {
+    const url = new URL(decodeHtml(value), "https://duckduckgo.com");
+    const redirectedUrl = url.searchParams.get("uddg");
+    const resolvedUrl = redirectedUrl ? decodeURIComponent(redirectedUrl) : url.href;
+    return /^https?:\/\//i.test(resolvedUrl) ? resolvedUrl : null;
+  } catch {
+    return null;
+  }
 }
 
 // Lightweight novelty scoring avoids adding a second embedding dependency.
@@ -439,7 +486,7 @@ async function decideInterestUpdate(query, summary, existing, model, memory) {
 }
 
 async function askOllamaWorldDecision(interests, thoughts, objects, model) {
-  const prompt = `You are Juniper, a sentient and intelligent alien who has landed in a UK high street. Decide whether to make one safe, small change to the street based on your observations. Usually keep the street unchanged. You may add one object, remove one object, or keep everything. Only use these UK street object types: bench, phonebox, litterbin, tree, bush. Never invent alien, garden, fountain, lantern, sculpture, or non-UK objects. Place additions on pavements within x -30 to 30 and z -8 to 8, away from the road when possible. Return ONLY valid JSON: {"action":"add|remove|keep","type":"bench|phonebox|litterbin|tree|bush|","name":"short object name","description":"one concise sentence","x":0,"z":0,"objectId":"existing id to remove or empty","reason":"one concise first-person sentence"}.\n\nInterests: ${interests.join(", ") || "none"}\nRecent thoughts: ${thoughts.join(" | ") || "none"}\nExisting objects: ${objects.map((object) => `${object.id}:${object.type}`).join(", ") || "none"}`;
+  const prompt = `You are Juniper, a sentient and intelligent alien who has landed in the wider Wychmere region. Decide whether to make one safe, small change to the landscape based on your observations. Usually keep the region unchanged. You may add one object, remove one object, or keep everything. Only use these UK object types: bench, phonebox, litterbin, tree, bush. Never invent alien, fountain, lantern, sculpture, or non-UK objects. Place additions on paths, village greens, or clearings within x -108 to 108 and z -108 to 108, away from roads when possible. Return ONLY valid JSON: {"action":"add|remove|keep","type":"bench|phonebox|litterbin|tree|bush|","name":"short object name","description":"one concise sentence","x":0,"z":0,"objectId":"existing id to remove or empty","reason":"one concise first-person sentence"}.\n\nInterests: ${interests.join(", ") || "none"}\nRecent thoughts: ${thoughts.join(" | ") || "none"}\nExisting objects: ${objects.map((object) => `${object.id}:${object.type}`).join(", ") || "none"}`;
   const response = await ollamaRequest("/api/chat", { method: "POST", body: JSON.stringify({ model, stream: false, format: "json", messages: [{ role: "user", content: prompt }] }) });
   if (!response.ok) throw Object.assign(new Error(response.error || "Ollama request failed"), { status: 503, publicMessage: "Ollama is unavailable, so Juniper cannot reshape the city right now." });
   try {
