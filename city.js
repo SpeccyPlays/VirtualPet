@@ -1,212 +1,238 @@
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js";
+import * as THREE from "three";
+import { createLayout, randomAt } from "./layout.js";
+import { createNavigation } from "./navigation.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
-// Build Wychmere's wider region. The scene is intentionally low-poly, but each
-// district has a different shape and palette so it remains readable at a distance.
+// Rendering consumes plain layout data. Units are approximately metres. Shared
+// materials keep GPU allocations down; only owned geometry is disposed on removal.
 export function createCity({ objects = [], worldSeed = 1 } = {}) {
-  const city = new THREE.Group();
-  const material = (color, roughness = 1) => new THREE.MeshStandardMaterial({ color, roughness });
-  const ground = new THREE.Mesh(new THREE.BoxGeometry(216, 0.18, 216), material(0x789b83));
-  ground.position.y = -0.12;
-  ground.receiveShadow = true;
-  city.add(ground);
-
-  const box = (width, height, depth, color, x, z, y = height / 2, group = city) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material(color));
-    mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh); return mesh;
+  const layout = createLayout(worldSeed), city = new THREE.Group(), materials = new Map();
+  const material = (color) => {
+    if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.85 }));
+    return materials.get(color);
   };
-  const strip = (width, depth, color, x, z, y = 0.02) => box(width, 0.05, depth, color, x, z, y);
-  const road = (x, z, width, depth, horizontal = true) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, 0.06, depth), material(0x414c58));
-    mesh.position.set(x, 0.02, z); mesh.receiveShadow = true; city.add(mesh); return mesh;
-  };
-  const path = (x, z, width, depth, horizontal = true) => strip(width, depth, 0xb9b29f, x, z, 0.055);
-
-  // A connected road network ties the city centre to the villages and nature areas.
-  road(0, 0, 82, 10); road(0, -20, 120, 7); road(0, 21, 118, 7);
-  road(-36, 0, 7, 48, false); road(36, 0, 7, 48, false); road(0, 40, 7, 38, false); road(0, -39, 7, 34, false);
-  for (let x = -37; x <= 37; x += 4) strip(1.8, 0.08, 0xf0eee1, x, 0, 0.075);
-  for (const z of [-4.72, 4.72]) { strip(80, 0.08, 0xe4bf52, 0, z - 0.16, 0.08); strip(80, 0.08, 0xe4bf52, 0, z + 0.16, 0.08); }
-  path(0, 10, 82, 2.2); path(0, -10, 82, 2.2); path(0, 31, 70, 2.4); path(-51, -1, 2.4, 32, false); path(51, -1, 2.4, 32, false);
-
-  function signTexture(text) {
+  function batchStatic(group, exclude = null) {
+    // One Mesh normally costs one draw call. Merge static pieces with the same
+    // material *within their group*, so window detail can still be hidden per
+    // building and landmark/object groups retain their picking identity.
+    const batches = new Map();
+    for (const child of group.children) {
+      if (!child.isMesh || child.isInstancedMesh || child === exclude || Array.isArray(child.material)) continue;
+      if (!batches.has(child.material)) batches.set(child.material, []);
+      batches.get(child.material).push(child);
+    }
+    for (const [sharedMaterial, parts] of batches) {
+      if (parts.length < 2) continue;
+      const geometries = parts.map((part) => { part.updateMatrix(); return part.geometry.clone().applyMatrix4(part.matrix); });
+      const geometry = mergeGeometries(geometries, false);
+      geometries.forEach((item) => item.dispose());
+      if (!geometry) continue;
+      const merged = new THREE.Mesh(geometry, sharedMaterial);
+      merged.castShadow = parts.some((part) => part.castShadow); merged.receiveShadow = true;
+      for (const part of parts) { group.remove(part); part.geometry.dispose(); }
+      group.add(merged);
+    }
+  }
+  function box(parent, w, h, d, color, x = 0, y = h / 2, z = 0) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material(color));
+    mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
+  }
+  function sign(parent, text, width, y, z) {
     const canvas = document.createElement("canvas"); canvas.width = 512; canvas.height = 96;
-    const context = canvas.getContext("2d"); context.fillStyle = "#fff7dd"; context.fillRect(0, 0, 512, 96);
-    context.fillStyle = "#1f2d35"; context.font = "bold 30px Arial"; context.textAlign = "center"; context.textBaseline = "middle"; context.fillText(text, 256, 48, 480);
-    return new THREE.CanvasTexture(canvas);
+    const ctx = canvas.getContext("2d"); ctx.fillStyle = "#263e43"; ctx.fillRect(0, 0, 512, 96);
+    ctx.fillStyle = "#f2e3bc"; ctx.font = "bold 34px Georgia"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, 256, 48, 480);
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, 0.65), new THREE.MeshStandardMaterial({ map: texture, roughness: 0.8 }));
+    mesh.position.set(0, y, z); parent.add(mesh);
   }
-  function building(x, z, width, depth, height, color, label = "") {
-    const group = new THREE.Group();
-    group.add(box(width, height, depth, color, 0, 0, height / 2, group));
-    for (let floor = 0; floor < Math.max(1, Math.floor(height / 1.5) - 1); floor += 1) {
-      for (let index = 0; index < Math.max(1, Math.floor(width / 1.2)); index += 1) box(0.34, 0.4, 0.04, 0xf5d58d, -width / 2 + 0.7 + index * 1.15, depth / 2 + 0.02, 1.9 + floor * 1.35, group);
+  // Local canvas textures establish surface scale without downloaded image assets.
+  function masonry(color, roof = false) {
+    const canvas = document.createElement("canvas"); canvas.width = canvas.height = 128;
+    const ctx = canvas.getContext("2d"); ctx.fillStyle = color; ctx.fillRect(0, 0, 128, 128);
+    for (let row = 0; row < 8; row++) {
+      ctx.strokeStyle = roof ? "#ffffff24" : "#d8cbb067"; ctx.lineWidth = roof ? 1 : 2;
+      ctx.beginPath(); ctx.moveTo(0, row * 16); ctx.lineTo(128, row * 16); ctx.stroke();
+      for (let col = -1; col < 4; col++) { const x = col * 40 + (row % 2 ? 20 : 0); ctx.beginPath(); ctx.moveTo(x, row * 16); ctx.lineTo(x, row * 16 + 16); ctx.stroke(); }
     }
-    if (label) {
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.42, 0.08), new THREE.MeshStandardMaterial({ color: 0xe5c45d, map: signTexture(label) }));
-      sign.position.set(0, Math.min(height - 0.7, 1.6), depth / 2 + 0.05); group.add(sign);
+    const map = new THREE.CanvasTexture(canvas); map.wrapS = map.wrapT = THREE.RepeatWrapping; map.repeat.set(2, 2); map.colorSpace = THREE.SRGBColorSpace;
+    return new THREE.MeshStandardMaterial({ map, roughness: 0.92 });
+  }
+  const bricks = [masonry("#965f4b"), masonry("#aa8162"), masonry("#b4ad92"), masonry("#7c7166")], slate = masonry("#444c55", true);
+  // PlaneGeometry starts in XY; rotate it onto XZ before setting vertex heights.
+  // Walkers use the same height function, keeping their feet on this surface.
+  const terrain = new THREE.PlaneGeometry(216, 216, 108, 108); terrain.rotateX(-Math.PI / 2);
+  const vertices = terrain.attributes.position;
+  for (let i = 0; i < vertices.count; i++) vertices.setY(i, layout.heightAt(vertices.getX(i), vertices.getZ(i)) - 0.04);
+  terrain.computeVertexNormals();
+  const ground = new THREE.Mesh(terrain, material(0x7d9362)); ground.receiveShadow = true; city.add(ground);
+  function ribbon(a, b, width, color) {
+    const length = Math.hypot(b.x - a.x, b.z - a.z), count = Math.max(1, Math.ceil(length / 2));
+    for (let i = 0; i < count; i++) {
+      const x = a.x + (b.x - a.x) * (i + 0.5) / count, z = a.z + (b.z - a.z) * (i + 0.5) / count;
+      const mesh = box(city, width, 0.04, length / count + 0.03, color, x, layout.heightAt(x, z) + 0.025, z);
+      mesh.rotation.y = Math.atan2(b.x - a.x, b.z - a.z); mesh.castShadow = false;
     }
-    group.position.set(x, 0, z); group.traverse((child) => { child.castShadow = true; child.receiveShadow = true; }); city.add(group);
+  }
+  for (const road of layout.roads) {
+    box(city, road.width + 4, 0.12, road.depth + 4, 0xb6afa1, road.x, 0.01, road.z);
+    box(city, road.width, 0.06, road.depth, 0x4e5355, road.x, 0.1, road.z);
+    const horizontal = road.width > road.depth, length = horizontal ? road.width : road.depth;
+    for (let t = -length / 2 + 3; t < length / 2 - 2; t += 6) box(city, horizontal ? 2.5 : 0.12, 0.015, horizontal ? 0.12 : 2.5, 0xe0ddcd, road.x + (horizontal ? t : 0), 0.14, road.z + (horizontal ? 0 : t));
+  }
+  for (let z = -3.4; z <= 3.4; z += 1.1) box(city, 3, 0.02, 0.55, 0xe7e3d8, 0, 0.15, z);
+  const trailNavigation = createNavigation(layout);
+  for (const path of layout.paths) {
+    const place = layout.landmarks.find((p) => p.x === path.a.x && p.z === path.a.z);
+    const approach = { x: path.a.x, z: path.a.z + place.depth / 2 + 2 };
+    const route = trailNavigation.route(path.b, approach);
+    for (let i = 1; i < route.length; i++) ribbon(route[i - 1], route[i], path.width, 0xb0a28b);
   }
 
-  // Central Wychmere: shops, civic buildings, and a compact town square.
-  [[-29, "Supermarket", 0x8d5148], [-22, "Betting Shop", 0x657987], [-15, "Golden Kebab", 0x9a654e], [-8, "Planet Pizza", 0x7d5967], [0, "Town Grocers", 0xa4765d], [8, "Fresh Market", 0x5d7682], [16, "Chicken & Chips", 0x8b5753], [24, "News & Snacks", 0x6f7f86]]
-    .forEach(([x, label, color]) => building(x, -8.8, 6.5, 4.4, 5.5, color, label));
-  [[-27, "Library", 0x657987], [-18, "Civic Hall", 0x8d6a58], [-8, "Post Office", 0x7b6170], [3, "Museum", 0x6c7e89], [14, "Market Hall", 0x98564b], [25, "Station", 0x59727d]]
-    .forEach(([x, label, color]) => building(x, 8.8, 7.5, 4.4, 6, color, label));
-  box(13, 0.15, 13, 0xa7b694, 0, 17.5, 0.08); path(0, 17.5, 13, 1.4); path(0, 17.5, 1.4, 13, false); box(1.2, 2.4, 1.2, 0x87aeb0, 0, 17.5, 1.2);
-
-  function tree(x, z, scale = 1, color = 0x3c7d69, parent = city) {
-    const group = new THREE.Group();
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 1.35 * scale, 7), material(0x654d43)); trunk.position.y = 0.68 * scale;
-    const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8 * scale, 0), material(color)); crown.position.y = 1.55 * scale;
-    group.add(trunk, crown); group.position.set(x, 0, z); group.traverse((child) => { child.castShadow = true; }); parent.add(group);
-  }
-  function village(x, z, name, accent) {
-    box(16, 0.12, 13, 0xb1a98e, x, z, 0.08); path(x, z, 15, 1.5);
-    [[-5, -3], [4, -3], [-4, 3], [5, 3]].forEach(([dx, dz], index) => building(x + dx, z + dz, 5.2, 4, 2.8, index % 2 ? 0xb37d62 : 0x9b6f52));
-    box(5, 3.6, 4, accent, x, z - 5, 1.8); const sign = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.5, 0.08), new THREE.MeshStandardMaterial({ color: 0xe5c45d, map: signTexture(name) })); sign.position.set(x, 2.6, z - 2.95); city.add(sign);
-    tree(x - 8, z - 5, 0.85); tree(x + 8, z + 5, 0.85);
-  }
-  village(-50, -28, "Moorfield", 0x6c7e89); village(48, -29, "Larkspur", 0x8b6655); village(48, 35, "Brackenford", 0x687e63);
-
-  // North-west forest and north-east public park are deliberately more open.
-  for (let x = -64; x <= -30; x += 7) for (let z = 22; z <= 51; z += 7) if ((x + z) % 3 !== 0) tree(x, z, 0.8 + ((x - z) % 3) * 0.05, 0x2f6b55);
-  box(31, 0.1, 27, 0x9cb58e, 42, 11, 0.08); path(42, 11, 26, 1.6); path(42, 11, 1.6, 24, false);
-  for (const [x, z] of [[31, 2], [53, 2], [31, 21], [53, 21], [42, 24]]) tree(x, z, 0.9, 0x4c8763);
-  box(3.2, 2.8, 2.8, 0xc18c62, 42, 11, 1.4); const parkSign = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.5, 0.08), new THREE.MeshStandardMaterial({ color: 0xe5c45d, map: signTexture("Wychmere Park") })); parkSign.position.set(42, 2.3, 9.55); city.add(parkSign);
-  for (let x = -34; x <= 34; x += 8) { tree(x, -6.6, 0.65); tree(x, 6.6, 0.65); }
-
-  // Deterministic chunk generation makes the larger world feel discovered rather
-  // than hand-placed. The seed is saved by app.js, so these chunks are identical
-  // every time this browser loads the same Juniper world.
-  const seed = Number(worldSeed) >>> 0;
-  const chunkSize = 24;
-  const chunkRadius = 4;
-  const generatedChunks = new Map();
-  const randomAt = (x, z, salt = 0) => {
-    let value = Math.imul((x | 0) ^ seed, 374761393) + Math.imul((z | 0) ^ salt, 668265263);
-    value = Math.imul(value ^ (value >>> 13), 1274126177);
-    return ((value ^ (value >>> 16)) >>> 0) / 4294967296;
-  };
-  const waterMaterial = new THREE.MeshStandardMaterial({ color: 0x4e9aa0, roughness: 0.25, transparent: true, opacity: 0.82 });
-  function generatedCabin(parent, x, z, color) {
-    const cabin = new THREE.Group();
-    box(4.2, 2.3, 3.8, color, 0, 0, 1.15, cabin);
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(3.1, 1.3, 4), material(0x5b4640));
-    roof.position.y = 2.95; roof.rotation.y = Math.PI / 4; cabin.add(roof);
-    box(0.45, 0.95, 0.06, 0x26343b, 0, -1.93, 0.5, cabin);
-    box(0.55, 0.48, 0.06, 0x9bd6c0, -1.15, -1.94, 1.25, cabin);
-    cabin.position.set(x, 0, z); cabin.traverse((child) => { child.castShadow = true; child.receiveShadow = true; }); parent.add(cabin);
-  }
-  function ruin(parent, x, z) {
-    for (const [dx, dz, height] of [[-1.2, -0.8, 2.1], [1.1, -0.6, 1.4], [0.2, 1.1, 1.8]]) box(0.55, height, 0.55, 0x74746b, x + dx, z + dz, height / 2, parent);
-  }
-  function generatedChunk(chunkX, chunkZ) {
-    const key = `${chunkX},${chunkZ}`;
-    if (generatedChunks.has(key)) return;
-    const chunk = new THREE.Group();
-    chunk.position.set(chunkX * chunkSize, 0, chunkZ * chunkSize);
-    const centerX = chunkX * chunkSize;
-    const centerZ = chunkZ * chunkSize;
-    const centralDistrict = Math.abs(centerX) < 48 && Math.abs(centerZ) < 24;
-    const roll = randomAt(chunkX, chunkZ, 11);
-    const forest = (centerX < -30 && centerZ > 24) || roll > 0.67;
-    const lake = !centralDistrict && roll < 0.08 && Math.abs(centerX) > 42;
-    const height = centralDistrict ? 0.08 : 0.18 + randomAt(chunkX, chunkZ, 17) * 0.65;
-    const terrainColor = forest ? 0x507c5c : 0x789b83;
-    box(chunkSize, height, chunkSize, terrainColor, 0, 0, height / 2 - 0.04, chunk);
-    if (lake) {
-      const water = new THREE.Mesh(new THREE.BoxGeometry(18, 0.12, 18), waterMaterial);
-      water.position.y = height + 0.08; chunk.add(water);
-      for (let rock = 0; rock < 5; rock += 1) {
-        const angle = randomAt(chunkX + rock, chunkZ, 23) * Math.PI * 2;
-        const radius = 8 + randomAt(chunkX, chunkZ + rock, 29) * 3;
-        box(0.7, 0.35, 0.7, 0x68736e, Math.cos(angle) * radius, Math.sin(angle) * radius, height + 0.16, chunk);
-      }
-    } else if (forest) {
-      const treeCount = 8 + Math.floor(randomAt(chunkX, chunkZ, 31) * 9);
-      for (let index = 0; index < treeCount; index += 1) {
-        const x = -10 + randomAt(chunkX * 31 + index, chunkZ, 37) * 20;
-        const z = -10 + randomAt(chunkX, chunkZ * 31 + index, 41) * 20;
-        tree(x, z, 0.65 + randomAt(index, chunkX + chunkZ, 43) * 0.5, index % 3 ? 0x2f6b55 : 0x3f805f, chunk);
-      }
-      if (randomAt(chunkX, chunkZ, 47) > 0.78) ruin(chunk, -2, 2);
+  const buildings = [];
+  function building(plot, parent = city) {
+    const group = new THREE.Group(), { width: w, depth: d, height: h } = plot;
+    const brick = bricks[Math.min(3, Math.floor(plot.tone * 4))];
+    // Civic buildings have an L-shaped footprint: the side wing is shorter and
+    // lower than the main hall. All pieces remain inside the reserved plot.
+    const winged = plot.kind === "civic";
+    const mainWidth = winged ? w * 0.65 : w;
+    const mainX = winged ? -w * 0.175 : 0;
+    box(group, mainWidth, h, d, 0xffffff, mainX).material = brick;
+    if (winged) { box(group, w * 0.35, h * 0.65, d * 0.6, 0xffffff, w * 0.325, h * 0.325, -d * 0.2).material = brick; box(group, w * 0.36, 0.2, d * 0.62, 0x51585a, w * 0.325, h * 0.65, -d * 0.2); }
+    box(group, w + 0.25, 0.25, d + 0.25, 0x8b8170, 0, 0.15);
+    // Extrude a triangle along Z for a gable. Hipped roofs use a scaled pyramid.
+    let roof;
+    if (plot.roof === "flat") {
+      roof = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.3, d + 0.3), slate); roof.position.y = h;
+    } else if (plot.roof === "hip") {
+      roof = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 4), slate); roof.rotation.y = Math.PI / 4;
+      roof.scale.set((mainWidth + 0.7) / Math.SQRT2, 2.1, (d + 0.7) / Math.SQRT2); roof.position.set(mainX, h + 1.05, 0);
     } else {
-      const treeCount = 1 + Math.floor(randomAt(chunkX, chunkZ, 53) * 4);
-      for (let index = 0; index < treeCount; index += 1) {
-        const x = -10 + randomAt(chunkX * 17 + index, chunkZ, 59) * 20;
-        const z = -10 + randomAt(chunkX, chunkZ * 17 + index, 61) * 20;
-        tree(x, z, 0.55 + randomAt(index, chunkX, 67) * 0.3, 0x4c8763, chunk);
-      }
-      if (randomAt(chunkX, chunkZ, 71) > 0.78) generatedCabin(chunk, -3, 2, 0x9b6f52);
-      if (randomAt(chunkX, chunkZ, 73) > 0.9) ruin(chunk, 3, -3);
+      const triangle = new THREE.Shape(); triangle.moveTo(-mainWidth / 2 - 0.35, 0); triangle.lineTo(0, 2.2); triangle.lineTo(mainWidth / 2 + 0.35, 0); triangle.closePath();
+      roof = new THREE.Mesh(new THREE.ExtrudeGeometry(triangle, { depth: d + 0.7, bevelEnabled: false }), slate); roof.position.set(mainX, h, -d / 2 - 0.35);
     }
-    chunk.traverse((child) => { child.receiveShadow = true; });
-    generatedChunks.set(key, chunk);
-    city.add(chunk);
+    roof.castShadow = true; group.add(roof);
+    box(group, 0.65, 2.2, 0.7, 0x825c4b, -w * 0.28, h + 1.25, -d * 0.22);
+    box(group, 0.85, 0.16, 0.9, 0x514c49, -w * 0.28, h + 2.4, -d * 0.22);
+    const detail = new THREE.Group(); group.add(detail);
+    for (let y = plot.kind === "shop" ? 4.3 : 1.9; y < h - 0.6; y += 2.5) for (let x = -w / 2 + 1.3; x < w / 2 - 0.5; x += 2.3) for (const side of [-1, 1]) {
+      if (winged && x > w * 0.15) continue;
+      const z = side * (d / 2 + 0.07);
+      box(detail, 1.05, 1.35, 0.12, 0xe0d8c5, x, y, z);
+      box(detail, 0.85, 1.15, 0.14, 0x56757c, x, y, z + side * 0.03);
+      box(detail, 0.07, 1.15, 0.17, 0xd8d5ca, x, y, z);
+      box(detail, 1.16, 0.12, 0.28, 0xb4ac98, x, y - 0.72, z);
+    }
+    box(detail, 1.1, 2.2, 0.16, 0x314346, w * 0.28, 1.15, d / 2 + 0.03);
+    if (plot.kind === "shop") {
+      box(detail, w * 0.62, 1.9, 0.16, 0x4b7078, -w * 0.12, 1.2, d / 2 + 0.07);
+      box(detail, w + 0.12, 0.18, 0.8, 0x3e5c52, 0, 3.1, d / 2 + 0.32);
+    }
+    if (plot.label) sign(detail, plot.label, w * 0.91, 2.7, d / 2 + 0.2);
+    group.position.set(plot.x, layout.heightAt(plot.x, plot.z), plot.z); group.rotation.y = plot.rotation;
+    batchStatic(detail); batchStatic(group);
+    group.userData.detail = detail; buildings.push(group); parent.add(group); return group;
   }
-  for (let chunkX = -chunkRadius; chunkX <= chunkRadius; chunkX += 1) {
-    for (let chunkZ = -chunkRadius; chunkZ <= chunkRadius; chunkZ += 1) generatedChunk(chunkX, chunkZ);
-  }
-
+  layout.plots.forEach((plot) => building(plot));
+  for (const fence of layout.fences) box(city, fence.width, 0.75, fence.depth, 0x6e7950, fence.x, layout.heightAt(fence.x, fence.z) + 0.4, fence.z);
   const landmarkMeshes = new Map();
-  const landmarks = [];
-  function landmarkSign(parent, text, x = 0, z = 0) {
-    const sign = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.55, 0.08), new THREE.MeshStandardMaterial({ color: 0xe5c45d, map: signTexture(text) }));
-    sign.position.set(x, 2.3, z); parent.add(sign);
+  for (const place of layout.landmarks) {
+    const group = new THREE.Group(); group.name = `landmark:${place.id}`; group.position.set(place.x, layout.heightAt(place.x, place.z), place.z);
+    if (place.id === "ship") {
+      // The reserved footprint includes the ramp. Hull and canopy are scaled
+      // spheres, keeping the craft organic rather than another box-shaped building.
+      const hull = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), material(0x778e97));
+      hull.name = "ship-hull";
+      hull.scale.set(6, 1.3, 4.5); hull.position.y = 1.9; group.add(hull);
+      const canopy = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), material(0x335e68));
+      canopy.scale.set(2.6, 1.6, 2.3); canopy.position.y = 2.5; group.add(canopy);
+      const luminous = new THREE.MeshStandardMaterial({ color: 0x91e7c1, emissive: 0x67bba6, emissiveIntensity: 0.9, roughness: 0.35 });
+      for (const x of [-4, 4]) for (const z of [-2.5, 2.5]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.8, 10), material(0x40555d)); leg.position.set(x, 0.9, z); group.add(leg);
+        box(group, 0.9, 0.15, 0.8, 0x40555d, x, 0.1, z);
+      }
+      for (const x of [-2.3, 0, 2.3]) {
+        const engine = new THREE.Mesh(new THREE.SphereGeometry(0.38, 12, 8), luminous); engine.position.set(x, 1.8, -3.8); group.add(engine);
+      }
+      box(group, 1.4, 1.7, 0.16, 0x253e48, 0, 1.7, 4.45);
+      const ramp = box(group, 2.2, 0.15, 3.2, 0x879b9b, 0, 0.4, 5.8); ramp.rotation.x = 0.18;
+    } else if (place.id === "observatory") {
+      box(group, 8, 3, 8, 0xa4a28d);
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(4.2, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), material(0x7b9393)); dome.position.y = 3; group.add(dome);
+    } else if (place.id === "old-station") {
+      building({ ...place, x: 0, z: 0, width: 11, depth: 5, height: 3.6, tone: 0.1, roof: "gable", kind: "civic", rotation: 0, label: "MOORFIELD" }, group);
+      for (const x of [-3, 3]) box(group, 0.1, 0.12, 16, 0x5c6260, x, 0.1, 9);
+    } else if (place.id === "castle") {
+      for (const x of [-5, 5]) { const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.9, 5, 16), material(0x827f70)); tower.position.set(x, 2.5, 0); group.add(tower); }
+      box(group, 9, 2.2, 1, 0x827f70, 0, 1.1, -4);
+    } else if (place.id === "market") {
+      for (const x of [-5, 0, 5]) { box(group, 3, 0.9, 2.5, 0x98704b, x); box(group, 3.7, 0.2, 3, x === 0 ? 0xa55f4a : 0x597c64, x, 2.4); for (const z of [-1, 1]) box(group, 0.08, 2.4, 0.08, 0x635444, x - 1.4, 1.2, z); }
+    } else if (place.id === "quarry") {
+      for (let i = 0; i < 4; i++) box(group, 14 - i * 2, 0.8, 3, 0x9b7b62, 0, 0.4 + i * 0.6, -4 + i * 2.5);
+    } else if (place.id === "river-crossing") {
+      box(group, 18, 0.16, 3.6, 0x8c7254, 0, 0.04);
+      for (const z of [-1.8, 1.8]) { box(group, 18, 0.12, 0.12, 0x69533f, 0, 1.1, z); for (let x = -8; x <= 8; x += 2) box(group, 0.12, 1.1, 0.12, 0x69533f, x, 0.55, z); }
+    } else if (place.id === "grove") {
+      for (let i = 0; i < 9; i++) { const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7, 1), material(0x8a8c79)); stone.position.set(Math.cos(i * 0.7) * 4, 0.5, Math.sin(i * 0.7) * 4); group.add(stone); }
+    }
+    sign(group, place.name, 5, 2.1, place.depth / 2 + 0.4);
+    batchStatic(group);
+    group.traverse((child) => { child.userData.landmarkId = place.id; child.castShadow = true; child.receiveShadow = true; }); city.add(group); landmarkMeshes.set(place.id, group);
   }
-  function landmark(id, name, description, x, z, build) {
-    const group = new THREE.Group();
-    group.userData.landmarkId = id;
-    build(group);
-    group.position.set(x, 0, z);
-    group.traverse((child) => { child.userData.landmarkId = id; child.castShadow = true; child.receiveShadow = true; });
-    landmarkMeshes.set(id, group);
-    landmarks.push({ id, name, description, x, z });
-    city.add(group);
+  const waterMaterial = new THREE.MeshStandardMaterial({ color: 0x597f83, roughness: 0.26, metalness: 0.25 });
+  for (const area of layout.water) {
+    const geometry = area.kind === "pond" ? new THREE.CircleGeometry(1, 40) : new THREE.PlaneGeometry(area.width, area.depth); geometry.rotateX(-Math.PI / 2);
+    const mesh = new THREE.Mesh(geometry, waterMaterial); if (area.kind === "pond") mesh.scale.set(area.width / 2, 1, area.depth / 2);
+    mesh.position.set(area.x, 0.025, area.z); city.add(mesh);
   }
-  landmark("observatory", "Wychmere Observatory", "A hilltop dome where Juniper can study the sky and compare it with the stars she remembers.", 72, 72, (group) => {
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(4.2, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), material(0x6f8d9b)); dome.position.y = 4; group.add(dome);
-    box(8, 3, 8, 0x8d9d95, 0, 0, 1.5, group); box(1.2, 2.8, 1.2, 0x26343b, 0, -4.05, 1.4, group); landmarkSign(group, "OBSERVATORY", 0, -4.1);
+  // Instancing renders all trunks/crowns with just two draw calls. Each matrix
+  // supplies one copy's position and scale; all copies share the same geometry.
+  const treePoints = [];
+  for (let i = 0; i < 430; i++) {
+    const x = -103 + randomAt(worldSeed, i, 0, 71) * 206, z = -103 + randomAt(worldSeed, i, 0, 73) * 206;
+    if (Math.abs(x) < 48 && Math.abs(z) < 54 || !layout.canPlace(x, z, objects) || layout.landmarks.some((p) => Math.hypot(x - p.x, z - p.z) < 13)) continue;
+    treePoints.push({ x, z, scale: 1.5 + randomAt(worldSeed, i, 0, 79) * 1.6 });
+  }
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.2, 2, 7), material(0x665443), treePoints.length);
+  const crowns = new THREE.InstancedMesh(new THREE.SphereGeometry(1.1, 10, 8), material(0x456a42), treePoints.length), transform = new THREE.Object3D();
+  treePoints.forEach((point, i) => {
+    transform.position.set(point.x, layout.heightAt(point.x, point.z) + point.scale, point.z); transform.scale.setScalar(point.scale); transform.updateMatrix(); trunks.setMatrixAt(i, transform.matrix);
+    transform.position.y += point.scale * 1.2; transform.scale.set(point.scale, point.scale * 1.35, point.scale); transform.updateMatrix(); crowns.setMatrixAt(i, transform.matrix);
   });
-  landmark("quarry", "Redstone Quarry", "A deep quarry wall exposes layers of stone, old machinery, and evidence of patient geological time.", -78, -66, (group) => {
-    box(15, 1.2, 12, 0x8a6551, 0, 0, 0.6, group); box(2.5, 3, 2.5, 0x5b5d58, -4, -2, 1.5, group); box(2.5, 2, 2.5, 0x5b5d58, 4, 3, 1, group); landmarkSign(group, "REDSTONE QUARRY", 0, -6.1);
-  });
-  landmark("old-station", "Old Moorfield Station", "A quiet rural station with a closed ticket office and rails leading toward the city.", -72, 48, (group) => {
-    box(11, 2.8, 4.2, 0x8d6a58, 0, 0, 1.4, group); box(5, 0.25, 6, 0x5b4640, 0, 0, 3, group); landmarkSign(group, "OLD STATION", 0, -2.15); path(-8, 0, 14, 1.2); path(8, 0, 14, 1.2);
-  });
-  landmark("wetlands", "Southmere Wetlands", "A broad wetland where reeds, birds, and shallow water make a living boundary around the region.", 70, -72, (group) => {
-    const water = new THREE.Mesh(new THREE.BoxGeometry(16, 0.16, 12), waterMaterial); water.position.y = 0.18; group.add(water);
-    for (let index = -6; index <= 6; index += 3) { const reed = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 1.2, 5), material(0x688c5b)); reed.position.set(index, 0.65, 6); group.add(reed); }
-    landmarkSign(group, "SOUTHMERE WETLANDS", 0, -6.1);
-  });
-  landmark("castle", "Brackenford Castle Ruins", "Broken walls overlook the northern road. Humans built here for protection; now the stones shelter moss and birds.", -72, 72, (group) => {
-    box(1.4, 6, 1.4, 0x74746b, -5, 0, 3, group); box(1.4, 4, 1.4, 0x74746b, 5, 1, 2, group); box(12, 1, 1.2, 0x74746b, 0, -5, 0.5, group); landmarkSign(group, "CASTLE RUINS", 0, -5.8);
-  });
-  landmark("market", "Larkspur Market", "A weekly market square where food, tools, gossip, and local stories travel between villages.", 72, -20, (group) => {
-    box(14, 0.12, 12, 0xb1a98e, 0, 0, 0.08, group); for (const x of [-5, 0, 5]) { box(3.2, 2.2, 2.4, 0xc18c62, x, 0, 1.1, group); box(3.6, 0.25, 2.8, 0x6c7e89, x, 0, 2.35, group); } landmarkSign(group, "LARKSPUR MARKET", 0, -6.1);
-  });
-  landmark("grove", "Moonlit Grove", "An old circle of trees where the forest is unusually quiet and Juniper's sensors detect faint repeating signals.", -42, 78, (group) => {
-    for (let index = 0; index < 7; index += 1) tree(Math.cos(index / 7 * Math.PI * 2) * 6, Math.sin(index / 7 * Math.PI * 2) * 6, 1.15, 0x2f6b55, group);
-    const stone = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.35, 8), material(0x68736e)); stone.position.y = 0.18; group.add(stone); landmarkSign(group, "MOONLIT GROVE", 0, -8);
-  });
-  landmark("river-crossing", "River Crossing", "A footbridge crosses the river running south of Wychmere and offers a clear view of the surrounding settlements.", 0, -78, (group) => {
-    box(18, 0.35, 2.4, 0x79543f, 0, 0, 1.1, group); for (const x of [-8, 8]) { box(0.18, 1.4, 0.18, 0x26333b, x, -0.9, 0.75, group); box(0.18, 1.4, 0.18, 0x26333b, x, 0.9, 0.75, group); } landmarkSign(group, "RIVER CROSSING", 0, -2.2);
-  });
-
-  // User-editable objects keep the same contract used by app.js and the server.
+  trunks.castShadow = crowns.castShadow = true; city.add(trunks, crowns);
   const objectMeshes = new Map();
-  function createObjectMesh(object) {
-    const group = new THREE.Group(); group.userData.objectId = object.id;
-    if (object.type === "bench") { box(1.8, 0.16, 0.42, 0x9b6f52, 0, 0, 0.55, group); box(1.8, 0.55, 0.12, 0x79543f, 0, -0.16, 0.82, group); [-0.65, 0.65].forEach((x) => box(0.12, 0.55, 0.12, 0x26333b, x, 0, 0.27, group)); }
-    else if (object.type === "phonebox") { box(0.85, 2.05, 0.75, 0xc93632, 0, 0, 1.03, group); box(0.58, 0.9, 0.04, 0xb8d0ca, 0, 0.39, 1.4, group); }
-    else if (object.type === "litterbin") { box(0.55, 0.75, 0.55, 0x4d5a5c, 0, 0, 0.38, group); box(0.72, 0.08, 0.72, 0x26333b, 0, 0, 0.8, group); }
-    else if (object.type === "tree") { const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 1.35, 7), material(0x654d43)); trunk.position.y = 0.68; const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 0), material(0x3c7d69)); crown.position.y = 1.55; group.add(trunk, crown); }
-    else if (object.type === "bush") { const bush = new THREE.Mesh(new THREE.DodecahedronGeometry(0.72, 1), material(0x3e705b)); bush.scale.set(1.25, 0.7, 0.8); bush.position.y = 0.48; group.add(bush); }
-    group.position.set(object.x, 0, object.z); group.traverse((child) => { child.userData.objectId = object.id; child.castShadow = true; child.receiveShadow = true; }); return group;
+  function addObject(object) {
+    if (objectMeshes.has(object.id)) removeObject(object.id);
+    const group = new THREE.Group();
+    if (object.type === "bench") { box(group, 1.8, 0.15, 0.55, 0x8c6847, 0, 0.55); box(group, 1.8, 0.55, 0.12, 0x8c6847, 0, 0.85, -0.2); for (const x of [-0.7, 0.7]) box(group, 0.12, 0.6, 0.5, 0x353f3c, x, 0.3); }
+    else if (object.type === "phonebox") { box(group, 0.85, 2.1, 0.8, 0xb44339); box(group, 0.62, 1.3, 0.05, 0x789c9b, 0, 1.25, 0.42); }
+    else if (object.type === "litterbin") box(group, 0.6, 0.85, 0.6, 0x3c4e46);
+    else { if (object.type === "tree") box(group, 0.25, 2.4, 0.25, 0x665443); const foliage = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 8), material(0x4c7548)); foliage.position.y = object.type === "tree" ? 2.3 : 0.6; group.add(foliage); }
+    group.position.set(object.x, layout.heightAt(object.x, object.z), object.z); group.traverse((child) => { child.userData.objectId = object.id; }); objectMeshes.set(object.id, group); city.add(group);
+    layout.obstacles.push({ id: `object:${object.id}`, x: object.x, z: object.z, width: object.type === "bench" ? 1.8 : 0.7, depth: object.type === "bench" ? 0.7 : 0.7 });
   }
-  function addObject(object) { const mesh = createObjectMesh(object); objectMeshes.set(object.id, mesh); city.add(mesh); }
-  function removeObject(id) { const mesh = objectMeshes.get(id); if (!mesh) return; city.remove(mesh); objectMeshes.delete(id); }
-  function getObjectPosition(id) { return objectMeshes.get(id)?.position || null; }
-  objects.forEach(addObject);
-  return { city, ground, objectMeshes, addObject, removeObject, getObjectPosition, landmarkMeshes, landmarks, worldBounds: { minX: -108, maxX: 108, minZ: -108, maxZ: 108 } };
+  function removeObject(id) {
+    const mesh = objectMeshes.get(id); if (!mesh) return;
+    mesh.traverse((child) => child.geometry?.dispose()); city.remove(mesh); objectMeshes.delete(id);
+    const index = layout.obstacles.findIndex((item) => item.id === `object:${id}`);
+    if (index >= 0) layout.obstacles.splice(index, 1);
+  }
+  // Preserve legacy objects, relocating only those now inside a building/road.
+  const placed = [];
+  for (const object of objects) {
+    if (!layout.canPlace(object.x, object.z, placed)) {
+      let found = false;
+      const ox = Math.max(-102, Math.min(102, object.x)), oz = Math.max(-102, Math.min(102, object.z));
+      for (let radius = 0; radius <= 210 && !found; radius += 2) for (let i = 0; i < 32 && !found; i++) {
+        const x = ox + Math.cos(i / 32 * Math.PI * 2) * radius, z = oz + Math.sin(i / 32 * Math.PI * 2) * radius;
+        if (layout.canPlace(x, z, placed)) { object.x = Math.round(x * 10) / 10; object.z = Math.round(z * 10) / 10; found = true; }
+      }
+    }
+    placed.push(object); addObject(object);
+  }
+  batchStatic(city, ground);
+  function updateDetails(camera, distance = 125) {
+    for (const group of buildings) group.userData.detail.visible = camera.position.distanceToSquared(group.getWorldPosition(transform.position)) < distance * distance;
+  }
+  return { city, ground, layout, cameraObstacles: buildings, objectMeshes, addObject, removeObject, updateDetails, getObjectPosition: (id) => objectMeshes.get(id)?.position, landmarkMeshes, landmarks: layout.landmarks, worldBounds: layout.bounds };
 }

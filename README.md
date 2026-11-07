@@ -1,78 +1,77 @@
 # Juniper
 
-Juniper is a browser-based Three.js simulation of a sentient, intelligent alien who has landed in the fictional UK city of Wychmere. She is learning how Earth works, developing her own interests, recording her thoughts, and researching the web through your local Ollama model.
+Juniper is a browser-based Three.js simulation of an alien exploring the fictional UK town of Wychmere. She observes local life, develops interests, remembers landmarks, and researches the web through a locally running Ollama model.
 
 This project was coded collaboratively with assistance from OpenAI Codex.
 
 ## Run it
 
-Install the backend dependencies, then start the local server:
+Requires Node.js 20 or newer and Ollama for generated thoughts.
 
 ```powershell
 npm install
 npm start
 ```
 
-Then open `http://localhost:3000`. Ollama should be running locally, with at least one model installed, for example:
+Open `http://localhost:3000`. Copy `.env.example` to `.env` to configure the model, Ollama URL, timeout, or port. Choose an installed model in the page. Rendering works without Ollama; event facts remain visible if reactions cannot be generated. Web research still requires internet access. Three.js and generated textures are served locally; optional Google Fonts fall back to system fonts offline.
+
+## The world
+
+- Seeded street-facing plots, terraced shops, civic buildings with side wings, houses, cottages, flats and a warehouse.
+- Gabled, hipped and flat roofs; brick textures, chimneys, windows, shopfronts, gardens, pavements, road markings and a bus shelter.
+- Continuous countryside terrain, a pond and river, a bridge, trees, market stalls, an observatory, a station, ruins, quarry and grove.
+- Juniper has a radial alien body with three supporting limbs, a translucent sensory mantle and animated luminous organs. Her companion shares that biology.
+- Route planning avoids building footprints, water and interactive objects. Click ground to guide Juniper; click objects or landmarks to inspect them. Landmark travel now actually sets a walking route.
+- Pedestrians, left-hand High Street traffic, a stopping bus, roaming foxes, cats and pigeons. Traffic yields to nearby pedestrians. This is a lightweight town simulation, not a complete traffic engine.
+- Time, weather, visible rain and local observations. Juniper reacts to things within observation range rather than knowing about every distant animal.
+- Tracking and collision-aware first-person cameras, population controls and graphics settings.
+- Smooth character turns and follow-camera heading; Juniper waits for traffic and can reroute around stopped vehicles.
+- Cars yield to people in their actual path rather than everyone on a crossing. Pedestrians and Juniper retry blocked routes; persistent obstructions lead Juniper to choose another destination.
+- A blinking alien face and a **Return to start** rescue button that preserves memories and chooses nearby clear ground if the spawn is busy. This is separate from the full save Reset control.
+- Juniper's ship rests in a clearing beyond the housing, with her companion stationed beside it. Juniper starts beside the ship whenever the world loads; **Return to start** also brings her back there. Juniper returns every six minutes of simulation time and rests for twenty seconds before exploring again. Manual directions override these visits; clicking the ship also allows travel there. Visits do not transfer memories or information.
+- Drag to orbit around Juniper while tracking her. Zoom remembers your chosen distance even when a wall temporarily pushes the camera closer.
+- A floating thought bubble indicates local-model work or observation. New thoughts store timestamps and their displayed ages update automatically; legacy thoughts without dates are shown as "Earlier".
+
+The finite region is 216 metres across. Layout generation follows a constrained town structure; seeds vary plots, side-street spacing, architecture and vegetation. It does not yet generate arbitrary street topologies or stream an infinite world.
+
+## Local AI and research
+
+Event facts are sent to `/api/event-reaction`, which uses local Ollama without web search. Reactions include current interests and recent memories. One local inference runs at a time, with waiting event reactions prioritised over ordinary inference. An active inference finishes before another starts. Old queued observations expire, and the browser retains only the newest waiting event.
+
+Manual and autonomous research share a server-enforced pause of **at least five minutes after a session finishes**, including failed sessions. Options are 5, 10, 15 and 30 minutes. A session can include several model calls; event reactions remain available during the pause. There is no cooldown override. The selected duration applies to the next research session.
+
+The schedule is stored in ignored `data/research-schedule.json`, so refreshes, other tabs and server restarts cannot bypass it. Resetting browser memories does not reset this server schedule. `SELF_RESEARCH_INTERVAL_MS` cannot lower the five-minute minimum.
+
+Research uses DuckDuckGo result snippets and source links; it does not fetch and verify entire articles. HTML scraping may fail when the provider changes its pages or limits requests.
+
+## Saves and local access
+
+Interests, thoughts, objects, discoveries, events and the world seed are stored in browser `localStorage`. Generator updates preserve the seed and memories. Objects that overlap the new layout are moved to nearby clear ground and their coordinates saved. A malformed JSON save is copied to `juniper-state-recovery` before defaults are restored. Browser storage can still be cleared by the browser; export important memories manually before clearing site data.
+
+The server binds to `127.0.0.1` by default and serves an explicit allowlist of frontend files. Keep `.env` private. Setting `HOST` to a LAN address exposes an unauthenticated local application and should be a deliberate development decision.
+
+## Development
 
 ```powershell
-ollama pull llama3.2
+npm test
 ```
 
-Copy `.env.example` to `.env` if you want to change the Ollama URL, model, or server port. The model picker in the app is populated from your locally installed Ollama models.
+Tests cover layout determinism and overlaps, routes to landmarks, saved-state migration, persistent cooldowns, AI queue priority, local HTTP endpoints and procedural scene construction. External search and model responses are mocked in API tests.
 
-The default configuration uses `phi4:latest` when that model is available. You can select any installed Ollama model from the model picker or set `OLLAMA_MODEL` in `.env`.
-
-## What is implemented
-
-- Animated 3D UK city, angular alien character with sensor crown and three eyes, buildings, lighting, fog, and responsive layout.
-- Seeded, explorable Wychmere region with connected city districts, villages, forests, lakes, cabins, ruins, landmarks, and public paths.
-- Deterministic chunk-based low-poly world generation keeps each user's terrain and landmarks the same between browser sessions.
-- High-street details including supermarkets, betting shops, pizza and kebab shops, lane markings, double yellow lines, a zebra crossing, parked cars, evenly spaced street lights, and a bus stop.
-- Larger explorable region with mouse-wheel and on-screen zoom controls.
-- Autonomous walking between city destinations; click a street or plaza to guide Juniper.
-- Optional third-person tracking camera that follows Juniper as she walks through the district.
-- A smaller lavender alien companion who roams the city independently alongside Juniper.
-- A world view focused on Juniper's movement, observations, thoughts, and relationship with the city.
-- The page layout puts the world beside Juniper's private thoughts and current questions, followed by autonomous browsing and the manual Curiosity desk.
-- Curiosity interests with add, remove, and Ollama-powered self-development flows.
-- Interest list guardrails: Juniper keeps at least 2 and at most 4 interests, and must make room before adding beyond the limit.
-- Thought history persisted in `localStorage`.
-- New thoughts are generated by the selected Ollama model for wake-ups, actions, and new interests; saved phrases remain as offline fallbacks.
-- Backend web research through DuckDuckGo result pages, with source links returned to the UI.
-- Search failures include the exact interest Juniper attempted, making it easier to identify and replace an unsearchable question.
-- Local Ollama summaries and first-person Juniper thoughts, using any installed model.
-- Optional autonomous self-research with a server-enforced one-minute minimum cooldown, selectable from 1 to 30 minutes, plus a confirmed one-time override. Once all current interests have been covered, Juniper revisits the least recently researched one instead of stopping.
-- After autonomous research, Ollama can keep, add, or remove an interest based on what Juniper learned.
-- Invalid or rejected interest changes are shown in the self-research status and toast, including the action and topic Juniper attempted.
-- Research can also produce a concrete follow-up topic from the returned sources; when her list is full, Juniper can replace an older interest with that new rabbit hole while preserving the 2–4 limit.
-- A compact structured research journal stores recent summaries and sources locally. The backend uses it for topic-diversity checks and asks Ollama for a second, more original topic when a proposed rabbit hole is too similar.
-- Research history and explicitly removed interests are saved locally and included in future Ollama prompts, helping Juniper avoid immediately repeating herself.
-- The Three.js frontend is split into `world.js` for scene interaction, `city.js` for city geometry, and `pet.js` for character geometry.
-- Persistent UK world objects including benches, a red telephone box, council litter bins, trees, and bushes.
-- Clicking a world object opens observational actions that add context to Juniper's thoughts.
-- Juniper can ask Ollama to add, remove, or leave a safe world object unchanged; the application validates every proposed change before applying it.
-- The world-object list is clickable: selecting an object focuses the camera on its saved coordinates and opens its interaction panel.
-- Reset control for clearing the local save, autonomous-research schedule, and stale state in other open tabs.
-- The generated world seed is saved with Juniper's browser state and is replaced only when the Reset control is used.
-- Named landmarks including an observatory, quarry, wetlands, castle ruins, market, grove, station, and river crossing.
-- Persistent landmark discoveries and location-based memories that Juniper records when she explores or interacts with a place.
-- Moving wildlife, timed weather and day/night changes, and temporary regional events that give Juniper reasons to revisit places.
-- Landmark routes, contextual observations, and an in-world activity panel showing places Juniper remembers and the latest event.
-
-## Next production step
-
-The research endpoint is intentionally server-side: the browser never talks directly to Ollama, and no API key is needed for the default search provider. The next production step would be moving pet state from `localStorage` into an authenticated database and adding a proper search API if you need stronger result guarantees than HTML scraping.
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for Three.js explanations and tuning points. Add `?debug=1` to the page URL to expose `juniperDebug.metrics()` in the browser console for draw calls, triangles and GPU resource counts. Compare the same seed, camera and graphics settings when profiling.
 
 ## Project structure
 
-- `server.js` — Express server, Ollama integration, web research, cooldowns, and world-change decisions.
-- `app.js` — Browser state, UI events, local persistence, research, interests, and object interactions.
-- `world.js` — Three.js camera, controls, movement, tracking view, and scene interaction.
-- `city.js` — seeded chunk generation, Wychmere's city, villages, terrain, lakes, forests, landmarks, and interactive objects.
-- `pet.js` — Low-poly Juniper and friend character meshes.
-- `index.html` and `styles.css` — Interface structure and visual styling.
-
-## Local data and secrets
-
-Pet state is stored in the browser's `localStorage`. Ollama configuration belongs in `.env`, which should remain private and is excluded by `.gitignore`. Use `.env.example` as the shareable configuration template.
+- [layout.js](./layout.js): deterministic world data, terrain height and spatial validation.
+- [navigation.js](./navigation.js): A* routes and obstacle checks, independent of rendering.
+- [city.js](./city.js): architecture, terrain, landmarks, textures and static batching.
+- [pet.js](./pet.js): alien geometry and named animation controls.
+- [population.js](./population.js): pedestrians, traffic, wildlife and street furniture.
+- [movement.js](./movement.js): smooth heading updates and vehicle collision checks.
+- [world.js](./world.js): camera, frame updates, navigation integration and observations.
+- [app.js](./app.js): UI, interests, event reactions and research coordination.
+- [save-state.js](./save-state.js): validated save restoration.
+- [research-policy.js](./research-policy.js): shared research interval rules.
+- [research-gate.js](./research-gate.js): persistent server research lock and schedule.
+- [ai-queue.js](./ai-queue.js): bounded inference queue.
+- [server.js](./server.js): HTTP routes, Ollama transport and web search.
