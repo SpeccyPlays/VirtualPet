@@ -73,20 +73,32 @@ test("save recovery and generator upgrades preserve seed, memories and objects",
   assert.equal(restored.worldSeed, 42); assert.equal(restored.objects[0].id, "a"); assert.equal(restored.memories[0].text, "I remember"); assert.equal(restored.thoughts.length, 1);
 });
 
-test("research gate clamps intervals, locks concurrent calls and survives restart", () => {
+test("research gate honours configurable intervals, locks concurrent calls and survives restart", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "juniper-gate-"));
   try {
     let now = 1000000;
     const filename = path.join(dir, "schedule.json");
     const gate = createResearchGate(filename, 60000, () => now);
     assert.equal(researchInterval("bad"), 300000);
+    assert.equal(researchInterval(120000), 120000);
+    assert.equal(researchInterval(3600000), 3600000, "No hard-coded upper duration");
+    for (const value of [null, "", -1, 0, 1.5, Infinity]) assert.equal(researchInterval(value, 120000), 120000);
     assert.ok(gate.begin(60000)); assert.equal(gate.begin(300000), false);
+    assert.equal(gate.status().phase, "researching");
+    gate.setPhase("thinking"); assert.equal(gate.status().phase, "thinking");
     now += 70000; gate.finish();
-    assert.equal(gate.status().retryAfterMs, 300000);
+    assert.equal(gate.status().phase, "idle");
+    assert.equal(gate.status().retryAfterMs, 60000);
     const restarted = createResearchGate(filename, 60000, () => now);
     assert.equal(restarted.begin(60000), false);
     now += 300000; assert.ok(restarted.begin(600000)); restarted.finish();
     assert.equal(restarted.status().retryAfterMs, 600000);
+    now += 600000;
+    assert.ok(restarted.begin()); restarted.finish();
+    assert.equal(restarted.status().retryAfterMs, 60000, "Omitted browser interval uses configured value, not persisted choice");
+    now += 60000;
+    assert.ok(restarted.begin(120000)); restarted.finish();
+    assert.equal(restarted.status().retryAfterMs, 120000);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -10,6 +10,29 @@ import { turnTowards } from "../movement.js";
 function layoutWith(obstacles) {
   return { obstacles, roads: [], isWalkable(x, z) { return Math.abs(x) <= 104 && Math.abs(z) <= 104 && !this.obstacles.some((o) => contains(o, x, z, 0.1)); } };
 }
+
+test("fence corners cannot be clipped between samples, and clearance overlap permits outward recovery", () => {
+  const obstacles = [{ x: 0, z: 0, width: 2, depth: 0.22 }];
+  const layout = { obstacles, roads: [], navigationClearance: 0.45,
+    heightAt: () => 0,
+    isWalkable(x, z, margin = 0.45) { return !obstacles.some((o) => contains(o, x, z, margin)); } };
+  const navigation = createNavigation(layout);
+  const a = { x: 1.5, z: 0.5 }, b = { x: 1.35, z: 0.6 };
+  assert.ok(layout.isWalkable(a.x, a.z) && layout.isWalkable(b.x, b.z));
+  assert.equal(navigation.segmentClear(a, b), false, "Both sampled endpoints are safe but the segment clips the corner");
+  const actor = { position: new THREE.Vector3(1.4, 0, 0.5), rotation: { y: 0 }, userData: {} };
+  assert.equal(layout.isWalkable(actor.position.x, actor.position.z), false);
+  assert.equal(navigation.segmentClear(actor.position, { x: 0, z: 0.5 }), false, "Cannot move deeper into the fence margin");
+  const path = navigation.route(actor.position, { x: 4, z: 2 });
+  assert.ok(path.length, "An already stuck actor must obtain an outward route");
+  const code = source.slice(source.indexOf("  function followRoute("), source.indexOf("  // One update per frame"));
+  const context = vm.createContext({ actor, path, turnTowards, navigation, layout,
+    population: { walkerBlocked: () => false, trafficBlocked: () => false } });
+  vm.runInContext(code, context);
+  vm.runInContext("for(let i=0;i<200;i++) followRoute(actor,path,0.05,1.1)", context);
+  assert.ok(layout.isWalkable(actor.position.x, actor.position.z));
+  assert.ok(actor.position.distanceTo(new THREE.Vector3(4, 0.13, 2)) < 0.01, "Recovery must actually move to the destination");
+});
 test("routes connect from visible grid anchors beside fences and bins", () => {
   for (const depth of [12, 0.8]) {
     const layout = layoutWith([{ x: 0.6, z: 0, width: 0.1, depth }]), nav = createNavigation(layout);

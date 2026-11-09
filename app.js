@@ -1,6 +1,7 @@
 import { createWorld } from "./world.js";
+import { createNarration, createBrowserSpeechAudio } from "./narration.js";
 import { restoreState, thoughtAge } from "./save-state.js";
-import { MIN_RESEARCH_MS, RESEARCH_INTERVALS, researchInterval } from "./research-policy.js";
+import { RESEARCH_INTERVALS, researchInterval } from "./research-policy.js";
 
 // Interest limits and the clean starting state for a newly arrived alien.
 const MIN_INTERESTS = 2;
@@ -30,6 +31,45 @@ const DEFAULT_STATE = {
 };
 // DOM access and local state restoration.
 const $ = (id) => document.getElementById(id);
+// Only explicit research/discovery call sites enqueue speech; ordinary thoughts stay silent.
+const speechAudio = createBrowserSpeechAudio();
+const narration = createNarration({ createAudio: () => speechAudio.createAudio(), onStatus: (message) => { $("narration-status").textContent = message; } });
+const narrationToggle = $("narration-toggle");
+narrationToggle.checked = false;
+// Audio activation lasts for this page session only; never restore a checked
+// control when the browser still requires a fresh gesture to enable sound.
+let narrationArmed = false;
+async function enableNarration() {
+  narrationArmed = false;
+  narration.setEnabled(false);
+  if (!narrationToggle.checked) return;
+  try {
+    await speechAudio.unlock();
+    if (!narrationToggle.checked) return;
+    narrationArmed = true;
+    narration.setEnabled(true);
+    narration.enqueue("Hello. I am Juniper. My voice is ready.");
+  } catch { $("narration-status").textContent = "Click Enable sound to allow playback."; }
+}
+// This button both enables narration and tests the whole speech path. Previously
+// it silently did nothing when the separate checkbox was off.
+$("enable-narration").addEventListener("click", async () => {
+  narrationToggle.checked = true;
+  await enableNarration();
+});
+narrationToggle.addEventListener("change", async () => {
+  await enableNarration();
+});
+$("narration-status").textContent = narrationToggle.checked ? "Click Enable sound to resume narration." : "Narration is off.";
+window.addEventListener("pagehide", () => { narration.stop(); narrationArmed = false; });
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) { narrationToggle.checked = false; narrationArmed = false; narration.setEnabled(false); }
+});
+function narrate(text) {
+  if (!narrationToggle.checked) return;
+  if (!narrationArmed) { $("narration-status").textContent = "Thought recorded. Click Enable sound to hear future narration."; return; }
+  narration.enqueue(text);
+}
 let modelsReady = false;
 const sessionResetGeneration = localStorage.getItem("juniper-reset-generation") || "0";
 const createWorldSeed = () => {
@@ -173,6 +213,7 @@ function recordLandmarkVisit(landmark) {
     const isShip = landmark.id === "ship";
     addMemory(landmark, isShip ? "I have returned to my ship." : `I reached ${landmark.name}. ${landmark.description}`);
     addThought(isShip ? "I have returned to my ship." : `I have discovered ${landmark.name}. ${landmark.description}`, "~");
+    if (!isShip) narrate(`I have discovered ${landmark.name}. ${landmark.description}`);
     render();
     toast(isShip ? "Juniper returned to her ship" : `Juniper discovered ${landmark.name}`);
   }
@@ -246,7 +287,7 @@ $("research-button").addEventListener("click", async () => {
   const query = $("research-topic").value; const model = $("model-select").value; if (!query || !model) return toast("Choose an interest and an available Ollama model");
   if (!canResearch()) return;
   const button = $("research-button"); button.disabled = true; button.textContent = "Thinking..."; $("research-result").hidden = true;
-  try { const data = await requestResearch("/api/research", query, model); showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research"; }
+  try { const data = await requestResearch("/api/research", query, model); showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); narrate(data.thought); toast(`Juniper researched "${query}" with ${model}`); } catch (error) { toast(error.message); } finally { button.disabled = false; button.textContent = "Research"; }
 });
 
 // Autonomous research scheduling and interest evolution.
@@ -256,9 +297,13 @@ let nextResearchAt = 0;
 let scheduleReady = false;
 let serverResearchBusy = false;
 let checkingSelfResearch = false;
+let lastSelfResearchSummary = "";
+let researchPhase = "researching";
 function syncSelfResearchSelection() {
   // Setting checkbox.checked during restoration does not fire a change event.
   // Startup, toggles and schedule refreshes must all update the same status.
+  if (lastSelfResearchSummary && !researchBusy && !serverResearchBusy) return syncSelfResearchStatus(lastSelfResearchSummary);
+  if (researchBusy) return syncSelfResearchStatus(researchPhase === "thinking" ? "Juniper is thinking." : "Juniper is researching.");
   if (!$("self-research-toggle").checked) return syncSelfResearchStatus("Self-research is off.");
   const prefix = "Self-research enabled. ";
   if (researchBusy || serverResearchBusy) return syncSelfResearchStatus(prefix + "Juniper is researching.");
@@ -285,13 +330,33 @@ function canResearch(quiet = false) {
 }
 async function requestResearch(endpoint, query, model) {
   researchBusy = true;
+  lastSelfResearchSummary = "";
+  researchPhase = "researching";
+  syncSelfResearchStatus("Juniper is researching.");
+  let observing = true, polling = false;
+  // The POST remains open during web search and inference. Read the actual
+  // server phase instead of guessing when search has finished.
+  const progressTimer = setInterval(async () => {
+    if (polling || !observing) return;
+    polling = true;
+    try {
+      const response = await fetch("/api/research-status");
+      if (!response.ok) return;
+      const progress = await response.json();
+      if (observing && progress.busy && progress.phase === "thinking") {
+        researchPhase = "thinking";
+        syncSelfResearchStatus("Juniper is thinking.");
+      }
+    } catch { /* Progress is advisory; the research POST owns failure handling. */ }
+    finally { polling = false; }
+  }, 500);
   try {
-    const response = await fetchThinking(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, intervalMs: researchInterval($("self-research-interval").value), interests: state.interests, ...researchContext() }) });
+    const response = await fetchThinking(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, model, intervalMs: $("self-research-interval").value ? researchInterval($("self-research-interval").value) : undefined, interests: state.interests, ...researchContext() }) });
     const data = await response.json(); updateResearchSchedule(data);
-    if (!response.ok) throw new Error(data.error || "Research unavailable");
+    if (!response.ok) throw Object.assign(new Error(data.error || "Research unavailable"), { researchData: data });
     syncSelfResearchStatus(`Next research after ${new Date(nextResearchAt).toLocaleTimeString()}. Juniper has time to observe the city.`);
     return data;
-  } finally { researchBusy = false; }
+  } finally { observing = false; clearInterval(progressTimer); researchBusy = false; }
 }
 async function applyInterestUpdate(update) {
   if (!update) return "Juniper requested an invalid change: Ollama returned no interest decision.";
@@ -324,7 +389,7 @@ async function applyInterestUpdate(update) {
   }
   if (update.action === "add" && candidate && state.interests.length < MAX_INTERESTS && !state.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase()) && !state.interests.some((item) => item.toLowerCase() === candidate.toLowerCase())) { state.interests.push(candidate); render(); save(); return `Juniper added "${candidate}" to her interests.`; }
   if (update.action === "remove" && candidate && state.interests.length > MIN_INTERESTS) { const index = state.interests.findIndex((item) => item.toLowerCase() === candidate.toLowerCase()); if (index >= 0) { state.interests.splice(index, 1); state.removedInterests.push(candidate); render(); save(); return `Juniper removed "${candidate}" from her interests.`; } }
-  if (update.action === "keep") return "";
+  if (update.action === "keep") return update.fallbackFailed ? update.reason : "";
   if (update.action === "add" && state.interests.length >= MAX_INTERESTS) return invalidChange(`her list already has ${MAX_INTERESTS} interests`);
   if (update.action === "remove" && state.interests.length <= MIN_INTERESTS) return invalidChange(`she must keep at least ${MIN_INTERESTS} interests`);
   if (update.action === "replace" && state.interests.length <= MIN_INTERESTS) return invalidChange(`she must keep at least ${MIN_INTERESTS} interests`);
@@ -354,12 +419,35 @@ async function runSelfResearch(manual = false) {
   const query = nextSelfResearchTopic(), model = $("model-select").value;
   if (!query || !model) return;
   const button = $("self-research-button"); button.disabled = true;
+  const previousInterests = [...state.interests];
   try {
     const data = await requestResearch("/api/self-research", query, model);
-    showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~");
+    showResearchResult(data); rememberResearch(query, data); addThought(data.thought, "~"); narrate(data.thought);
+    syncSelfResearchStatus("Juniper is thinking.");
     const change = data.interestUpdate ? await applyInterestUpdate(data.interestUpdate) : "";
-    syncSelfResearchStatus(`Researched "${query}". ${change} Next research after ${new Date(nextResearchAt).toLocaleTimeString()}.`);
-  } catch (error) { syncSelfResearchStatus(error.message); }
+    const removed = previousInterests.filter((item) => !state.interests.includes(item));
+    const added = state.interests.filter((item) => !previousInterests.includes(item));
+    const changes = [
+      ...removed.map((item) => `She removed "${item}" from her interests.`),
+      ...added.map((item) => `She added "${item}" to her interests.`),
+    ].join(" ") || change || "Her interests stayed the same.";
+    lastSelfResearchSummary = `Juniper researched "${query}". ${changes} Next research after ${new Date(nextResearchAt).toLocaleTimeString()}.`;
+    syncSelfResearchStatus(lastSelfResearchSummary);
+  } catch (error) {
+    let change = error.researchData?.interestUpdateError || "";
+    if (error.researchData?.interestUpdate) {
+      syncSelfResearchStatus("Juniper is thinking.");
+      try { change = await applyInterestUpdate(error.researchData.interestUpdate); }
+      catch { change = "Juniper could not update her interests."; }
+    }
+    const removed = previousInterests.filter((item) => !state.interests.includes(item));
+    const added = state.interests.filter((item) => !previousInterests.includes(item));
+    const actualChanges = [...removed.map((item) => `She removed "${item}" from her interests.`), ...added.map((item) => `She added "${item}" to her interests.`)].join(" ");
+    const nextTime = nextResearchAt > Date.now() ? `Next research after ${new Date(nextResearchAt).toLocaleTimeString()}.`
+      : "The next research time will be confirmed when the server schedule is available.";
+    lastSelfResearchSummary = `${error.message} ${actualChanges || change} ${nextTime}`;
+    syncSelfResearchStatus(lastSelfResearchSummary);
+  }
   finally { button.disabled = false; }
 }
 $("self-research-toggle").addEventListener("change", () => {
@@ -389,9 +477,8 @@ async function checkSelfResearch() {
 }
 function setupSelfResearch() {
   $("self-research-toggle").checked = localStorage.getItem("juniper-self-research-enabled") === "true";
-  const savedInterval = researchInterval(localStorage.getItem("juniper-self-research-interval"));
-  $("self-research-interval").value = String(RESEARCH_INTERVALS.includes(savedInterval) ? savedInterval : MIN_RESEARCH_MS);
-  localStorage.setItem("juniper-self-research-interval", $("self-research-interval").value);
+  const savedInterval = researchInterval(localStorage.getItem("juniper-self-research-interval"), null);
+  $("self-research-interval").value = RESEARCH_INTERVALS.includes(savedInterval) ? String(savedInterval) : "";
   syncSelfResearchSelection();
   void checkSelfResearch();
   // Read the server on every automatic check; another tab may have researched.
@@ -461,6 +548,7 @@ async function askJuniperToMakeRoom() {
 // Final page setup: render saved state and start the Three.js world.
 $("reset-button").addEventListener("click", () => {
   if (!window.confirm("Reset Juniper's local world and memories?")) return;
+  narration.stop();
   localStorage.removeItem("juniper-state");
   localStorage.removeItem("juniper-self-research-enabled");
   localStorage.removeItem("juniper-self-research-interval");

@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 data/
+.venv-piper/
 
 # Local configuration and secrets
 .env

@@ -29,9 +29,9 @@ test("HTTP routes share cooldown, keep event inference local, and hide private f
     assert.equal((await nativeFetch(base + "/vendor/three/build/three.module.js")).status, 200);
     assert.equal((await nativeFetch(base + "/movement.js")).status, 200);
     assert.equal((await post("/api/research", { query: "" })).status, 400);
-    const research = await post("/api/research", { query: "Birds", intervalMs: 60000 });
+    const research = await post("/api/research", { query: "Birds", intervalMs: 120000 });
     assert.equal(research.status, 200);
-    const answer = await research.json(); assert.ok(answer.retryAfterMs >= 299000);
+    const answer = await research.json(); assert.ok(answer.retryAfterMs >= 119000 && answer.retryAfterMs <= 120000);
     const blocked = await post("/api/self-research", { query: "Birds", override: true }); assert.equal(blocked.status, 429);
     assert.equal(searches, 1);
     const event = { id: "bird-1", createdAt: Date.now(), description: "A pigeon pecks at the pavement.", location: "High Street" };

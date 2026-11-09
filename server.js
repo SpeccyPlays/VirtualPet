@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { recoverInterestDecision } from "./interest-fallback.js";
+import { createSpeechHandler } from "./speech.js";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,9 +26,10 @@ const researchGate = createResearchGate(process.env.RESEARCH_SCHEDULE_FILE || pa
 
 // Static hosting and small JSON request bodies for the local-only backend.
 app.use(express.json({ limit: "32kb" }));
+app.post("/api/speech", createSpeechHandler({ url: process.env.PIPER_URL || "http://127.0.0.1:5000", speaker: Number(process.env.PIPER_SPEAKER_ID ?? 3) }));
 // Explicit public files prevent accidentally exposing server source, saves, or
 // future private files. This keeps existing frontend paths without moving files.
-const publicFiles = new Set(["index.html", "styles.css", "app.js", "world.js", "city.js", "pet.js", "layout.js", "navigation.js", "population.js", "movement.js", "save-state.js", "research-policy.js"]);
+const publicFiles = new Set(["index.html", "styles.css", "app.js", "narration.js", "world.js", "city.js", "pet.js", "layout.js", "navigation.js", "population.js", "movement.js", "save-state.js", "research-policy.js"]);
 app.use("/vendor/three", express.static(path.join(__dirname, "node_modules", "three"), { dotfiles: "deny", index: false }));
 app.get(["/", "/:file"], (req, res, next) => {
   const filename = req.params.file || "index.html";
@@ -124,7 +127,22 @@ app.post(["/api/research", "/api/self-research"], async (req, res) => {
   let failure;
   try {
     const sources = await searchWeb(query);
-    if (!sources.length) throw Object.assign(new Error('No web sources were found for "' + query + '".'), { status: 404 });
+    if (!sources.length) {
+      let interestUpdate, interestUpdateError;
+      if (req.path === "/api/self-research") {
+        researchGate.setPhase("thinking");
+        try {
+          const decision = await decideInterestUpdate(query, "No web sources were returned. No facts were learned.", interests, model, memory, true);
+          const candidate = decision.interest;
+          if (!candidate || decision.action === "keep" || interests.some((item) => item.toLowerCase() === candidate.toLowerCase()) || memory.removedInterests.some((item) => item.toLowerCase() === candidate.toLowerCase())) throw new Error("No valid alternative");
+          const failedInterest = interests.find((item) => item.toLowerCase() === query.toLowerCase());
+          interestUpdate = failedInterest ? { ...decision, action: "replace", removeInterest: failedInterest }
+            : decision;
+        } catch { interestUpdateError = "Juniper could not choose a valid new interest; her interests are unchanged."; }
+      }
+      throw Object.assign(new Error('No web sources were found for "' + query + '".'), { status: 404, interestUpdate, interestUpdateError });
+    }
+    researchGate.setPhase("thinking");
     const answer = await askOllama(query, sources, model, memory);
     let interestUpdate;
     if (req.path === "/api/self-research") {
@@ -135,7 +153,7 @@ app.post(["/api/research", "/api/self-research"], async (req, res) => {
   } catch (error) { failure = error; }
   // Success and failure both reserve breathing room, preventing retry storms.
   const schedule = researchGate.finish();
-  if (failure) return res.status(failure.status || 502).json({ error: failure.publicMessage || failure.message, ...schedule });
+  if (failure) return res.status(failure.status || 502).json({ error: failure.publicMessage || failure.message, interestUpdate: failure.interestUpdate, interestUpdateError: failure.interestUpdateError, ...schedule });
   res.json({ ...result, ...schedule });
 });
 
@@ -389,8 +407,8 @@ async function askOllamaInterest(existing, thoughts, model, memory) {
   }
 }
 
-async function decideInterestUpdate(query, summary, existing, model, memory) {
-  const prompt = `You are Juniper, a sentient and intelligent alien studying life in a UK city. Follow the most interesting thread from the research summary and decide how her curiosity should evolve. First look for one concrete, searchable follow-up topic from the returned facts, examples, people, places, technologies, or unanswered questions; do not merely repeat the researched topic. If no meaningful follow-up exists, deliberately choose a completely new, searchable topic inspired by a different detail in the research, even if it changes direction sharply. Avoid topics that are too similar to the researched journal below. Do not use keep unless the sources contain no usable new topic at all. If there are fewer than 4 interests, use action add. If there are already 4, use action replace: remove the least relevant existing interest and add the new topic in the same response. Never leave fewer than 2 interests, never remove arbitrarily, and do not add an owner-removed topic. Return ONLY valid JSON: {"action":"keep|add|remove|replace","interest":"new topic or exact interest to remove","removeInterest":"exact existing interest to remove when action is replace","reason":"one concise first-person sentence"}.\n\nResearched interest: ${query}\nResearch summary: ${summary}\nExisting interests (${existing.length}/4): ${existing.join(", ") || "none"}\nPreviously researched topic journal:\n${journalPromptText(memory.researchJournal)}\nOwner-removed interests: ${memory.removedInterests.join(", ") || "none"}`;
+async function decideInterestUpdate(query, summary, existing, model, memory, noSources = false) {
+  const prompt = (noSources ? "The search returned NO sources. Do not invent findings. Choose a different concrete searchable interest, replacing the failed query if it is in the list. Do not choose keep or remove without a replacement. This is a change of curiosity, not a research conclusion.\n\n" : "") + `You are Juniper, a sentient and intelligent alien studying life in a UK city. Follow the most interesting thread from the research summary and decide how her curiosity should evolve. First look for one concrete, searchable follow-up topic from the returned facts, examples, people, places, technologies, or unanswered questions; do not merely repeat the researched topic. If no meaningful follow-up exists, deliberately choose a completely new, searchable topic inspired by a different detail in the research, even if it changes direction sharply. Avoid topics that are too similar to the researched journal below. Do not use keep unless the sources contain no usable new topic at all. If there are fewer than 4 interests, use action add. If there are already 4, use action replace: remove the least relevant existing interest and add the new topic in the same response. Never leave fewer than 2 interests, never remove arbitrarily, and do not add an owner-removed topic. Return ONLY valid JSON: {"action":"keep|add|remove|replace","interest":"new topic or exact interest to remove","removeInterest":"exact existing interest to remove when action is replace","reason":"one concise first-person sentence"}.\n\nResearched interest: ${query}\nResearch summary: ${summary}\nExisting interests (${existing.length}/4): ${existing.join(", ") || "none"}\nPreviously researched topic journal:\n${journalPromptText(memory.researchJournal)}\nOwner-removed interests: ${memory.removedInterests.join(", ") || "none"}`;
   const response = await ollamaRequest("/api/chat", {
     method: "POST",
     body: JSON.stringify({
@@ -432,7 +450,7 @@ async function decideInterestUpdate(query, summary, existing, model, memory) {
   const removeInterest = String(parsed.removeInterest || "")
     .trim()
     .slice(0, 80);
-  return {
+  return recoverInterestDecision({
     action,
     interest: action === "keep" ? "" : interest,
     removeInterest: action === "replace" ? removeInterest : "",
@@ -441,7 +459,16 @@ async function decideInterestUpdate(query, summary, existing, model, memory) {
         .trim()
         .slice(0, 240) ||
       "I am still curious about this, so I will keep it on my list.",
-  };
+  }, {
+    existing, removed: memory.removedInterests, query,
+    isNovel: (topic) => isNovelTopic(topic, memory.researchJournal),
+    generate: async ({ domain, rejected }) => {
+      const freshPrompt = `Choose a completely fresh curiosity for Juniper, an alien exploring Earth. A previous interest suggestion was rejected. Change subject radically; do not continue the current research thread. Use ${domain} as a creative starting direction, but choose a specific, varied, searchable topic yourself. Do not invent research findings. Avoid current interests, removed interests, previous research and rejected suggestions, including close paraphrases. Return ONLY JSON: {"interest":"specific topic under 80 characters","reason":"one first-person sentence"}.\nCurrent interests: ${existing.join(" | ")}\nRemoved interests: ${memory.removedInterests.join(" | ")}\nCurrent research: ${query}\nPrevious research: ${journalPromptText(memory.researchJournal)}\nRejected suggestions: ${rejected.join(" | ")}`;
+      const response = await ollamaRequest("/api/chat", { method: "POST", body: JSON.stringify({ model, stream: false, format: "json", options: { temperature: 1 }, messages: [{ role: "user", content: freshPrompt }] }) });
+      if (!response.ok) throw new Error("Fresh interest unavailable");
+      return parseOllamaJson(response.data.message?.content || "", ["interest", "reason"]);
+    },
+  });
 }
 
 async function askOllamaWorldDecision(interests, thoughts, objects, model) {

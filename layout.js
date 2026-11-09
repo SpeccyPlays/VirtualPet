@@ -98,5 +98,5 @@ export function createLayout(seed = 1) {
   for (const place of landmarks.filter((p) => ["ship", "observatory", "old-station", "quarry", "castle", "market"].includes(p.id))) obstacles.push({ ...place });
   const isWalkable = (x, z, clearance = 0.45) => Number.isFinite(x) && Number.isFinite(z) && Math.abs(x) <= 106 && Math.abs(z) <= 106 && !isWater(x, z) && !obstacles.some((o) => contains(o, x, z, clearance));
   const canPlace = (x, z, objects = []) => isWalkable(x, z, 1.3) && !roads.some((r) => contains(r, x, z, 0.8)) && !landmarks.some((p) => contains(p, x, z, 1)) && !objects.some((o) => Math.hypot(o.x - x, o.z - z) < 2);
-  return { seed, roads, plots, paths, landmarks, water, fences, obstacles, heightAt, isWater, isWalkable, canPlace, bounds: WORLD_BOUNDS };
+  return { seed, roads, plots, paths, landmarks, water, fences, obstacles, navigationClearance: 0.45, heightAt, isWater, isWalkable, canPlace, bounds: WORLD_BOUNDS };
 }

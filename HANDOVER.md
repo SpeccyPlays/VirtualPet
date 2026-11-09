@@ -1,5 +1,55 @@
 # Session handover
 
+## Fresh-interest fallback — 9 November 2026
+
+- Invalid research interest suggestions now trigger up to two local Ollama fresh-topic attempts, with randomized broad prompt directions and blocked/recent-topic validation. Valid replacements preserve their target. Exhaustion leaves interests unchanged with a visible explanation. All 46 tests passed; actual model topic diversity remains a runtime check.
+- Also removed an erroneous no-sources prompt prefix referencing an undefined variable in the unrelated world-decision function, introduced in the earlier no-sources change. No private environment contents were read.
+
+## Failed-search handling — 9 November 2026
+
+- Failed self-research summaries now include the next allowed search time and survive ordinary status polling. If no future deadline is known, the UI explicitly says it needs server confirmation.
+- A no-sources result now attempts a local Ollama alternative-interest decision before finishing the cooldown. Valid alternatives replace the failed interest; invalid/unavailable decisions leave interests unchanged with an explanation. No fabricated findings or failed-session narration are recorded.
+- Full suite: 43 tests passed with mocked web/Ollama responses. Tests cover no-source replacement, retained cooldown, error summary changes/time and polling persistence. Private environment contents were not read.
+
+## Latest behaviour — 9 November 2026
+
+- Research no longer has a fixed five-minute floor: positive `SELF_RESEARCH_INTERVAL_MS` is the server default, and the browser can select Server setting (.env) or an explicit 2/5/10/15/30-minute override. Existing cooldown deadlines survive configuration changes.
+- Narration is now session-only, unchecked on load; old saved preferences are ignored. Both enabling the checkbox and Enable sound speak the test phrase.
+- Self-research reports researching during web search and thinking during Ollama work using server phase polling. Its completed topic/actual interest changes/next-time summary remains visible across routine schedule checks until the next research request. Not persisted on reload.
+- Latest full suite: 41 tests passed, including phase transitions and persistent completed summaries. No private environment file was inspected. These notes supersede earlier fixed-minimum and persisted-narration descriptions below.
+
+## Documentation checkpoint — 9 November 2026
+
+- Owner confirmed speech works. README now documents first-install prerequisites, isolated Piper installation, voice/licence downloads, combined startup/shutdown, sound test and dependency/voice credits. DEVELOPMENT covers configuration, explicit triggers, audio activation, cancellation, diagnostics, fence recovery and verification limits. PIPER_SETUP wording now reflects integration and 39 passing tests.
+- Ambient town sounds/crossfades are deferred to a future session; no ambient code was added. This documentation update changed no application code and did not read private environment settings. Local documentation links and diff whitespace were checked; tests were not rerun for documentation-only edits.
+
+## Narration activation fix — 9 November 2026
+
+- Enable sound previously did nothing when the separate narration checkbox was unchecked. It now enables/persists the preference, awaits browser audio activation and narrates a test phrase. Eligible thoughts received before activation display an explicit prompt instead of silently disappearing.
+- Speech failures now expose the backend error in the frontend status. Node logs speech acceptance/completion/failure without thought text. The self-research successful-result path was confirmed to invoke narration.
+- Browser check on localhost:3000: clicking Enable sound with narration off checked the toggle, submitted speech and completed Web Audio playback (status returned to Narration is on). Physical speaker output was not independently heard.
+
+## Combined startup — 9 November 2026
+
+- `npm start` now runs `start.js`, loading environment settings privately at runtime, validating local Piper configuration, launching or reusing Piper, checking real synthesis with the selected speaker, and starting Node. `npm run start:server` retains Node-only operation. Ctrl+C stops owned processes; reused Piper is left running.
+- All 38 tests passed. A smoke test using public example settings reused local Piper, verified Semaine speaker 3 and started Node on test port 3011; the test launcher was then stopped. The private environment file was not inspected. Self-research's successful-result path already calls narration; browser sound activation is still required.
+
+## Fence navigation recovery — 9 November 2026
+
+- Reproduced diagonal fence-corner clipping between sampled navigation checks. Once an actor entered the obstacle clearance margin, all replans rejected its blocked starting point, causing repeated recovery captions without movement.
+- Navigation now checks continuous rectangle intersections using the layout's shared 0.45-metre clearance. Actors already overlapping only a safety margin may move outward; entering the solid obstacle or moving deeper remains forbidden.
+- Added a regression that exercises real route following from a blocked margin through to arrival, plus the corner-clipping case. All 36 tests passed using public example configuration; the owner's exact in-browser location and a long session remain unverified.
+
+## Local speech preparation — 9 November 2026
+
+- Narration integration is now implemented: `/api/speech` forwards text and configured speaker to Piper; the browser provides an opt-in saved toggle and explicit audio activation after reload. Only successful research and first non-ship location discoveries narrate. Disable cancels playback/requests and clears the bounded queue.
+- Validation: 35 tests passed and real backend-to-Piper synthesis returned HTTP 200 WAV audio. Editor diagnostics were clear. Tests used public example configuration; private `.env` was not inspected. Browser listening and concurrent Ollama load remain manual checks. Earlier step-1 notes below describe setup history, not current integration status.
+
+- Completed narration setup step 1 only: isolated `.venv-piper`, Piper 1.8.0 HTTP dependencies, and Semaine medium voice with model card/licence copies in ignored `data/piper`.
+- CPU synthesis and all four speaker IDs were checked through the local HTTP server. The owner selected speaker 3 as Juniper's voice; the documented start command uses `--speaker 3`. No agent listening or concurrent Ollama performance check was performed.
+- See [PIPER_SETUP.md](./PIPER_SETUP.md) for the start command, verification, licence sources and remaining shared-environment MediaPipe conflicts. No application code or narration integration was changed.
+- Agreed narration scope: successful manual/autonomous research and first location discoveries only; exclude objects, random events, repeated visits and restored history. Frontend toggle should default off and stop/clear narration when disabled.
+
 Updated: 7 November 2026. Read [README.md](./README.md), then [DEVELOPMENT.md](./DEVELOPMENT.md), before editing code.
 
 ## Completed changes

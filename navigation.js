@@ -22,10 +22,42 @@ export function createNavigation(layout, step = 2) {
     return result;
   }
   function segmentClear(a, b) {
+    // Sampling alone can miss a short diagonal clip at a fence corner. A later
+    // movement step then lands inside its clearance and every new route fails.
+    const clearance = layout.navigationClearance;
+    let escaping = false;
+    if (Number.isFinite(clearance)) {
+      for (const obstacle of layout.obstacles) {
+        const hx = obstacle.width / 2, hz = obstacle.depth / 2;
+        const ax = a.x - obstacle.x, az = a.z - obstacle.z;
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const gapX = Math.abs(ax) - hx, gapZ = Math.abs(az) - hz;
+        if (gapX < clearance && gapZ < clearance) {
+          // Permit an actor already in a safety margin to step outward, never
+          // deeper into it or through the physical fence/building.
+          const gap = Math.max(gapX, gapZ);
+          const outward = (gapX >= gapZ && Math.sign(ax) * dx > 1e-9)
+            || (gapZ >= gapX && Math.sign(az) * dz > 1e-9);
+          if (gap < 0 || !outward) return false;
+          escaping = true;
+          continue;
+        }
+        let enter = 0, exit = 1;
+        for (const [origin, direction, extent] of [[ax, dx, hx + clearance], [az, dz, hz + clearance]]) {
+          if (Math.abs(direction) < 1e-12) {
+            if (Math.abs(origin) >= extent) { enter = 1; exit = 0; break; }
+          } else {
+            const t1 = (-extent - origin) / direction, t2 = (extent - origin) / direction;
+            enter = Math.max(enter, Math.min(t1, t2)); exit = Math.min(exit, Math.max(t1, t2));
+          }
+        }
+        if (enter < exit) return false;
+      }
+    }
     const count = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.35);
     for (let i = 0; i <= count; i++) {
       const t = count ? i / count : 0;
-      if (!layout.isWalkable(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t)) return false;
+      if (!layout.isWalkable(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, escaping ? 0 : undefined)) return false;
     }
     return true;
   }
